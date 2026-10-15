@@ -1,6 +1,8 @@
-# Neural Triage: Team Routing & Duplicate Detection for `flutter/flutter`
+# Pointsman
 
-A learning-first, production-minded ML system that predicts which Flutter **Team** should own a new GitHub Issue, decides whether that prediction is trustworthy enough to **Auto-assign**, finds likely **Duplicates**, and keeps working when Flutter reorganizes its Teams.
+> Sets the points so every issue lands on the right team's track, and resets them when the tracks change.
+
+An open-source ML system that predicts which Flutter **Team** should own a new GitHub Issue, decides whether that prediction is trustworthy enough to **Auto-assign**, finds likely **Duplicates**, and keeps working when Flutter reorganizes its Teams.
 
 - Vocabulary: [CONTEXT.md](CONTEXT.md). Capitalized terms (Team, Routed Issue, Weak Label, …) are defined there.
 - Decisions: [docs/adr/](docs/adr/). Start with [ADR 0001: Team identity](docs/adr/0001-team-identity.md).
@@ -81,7 +83,7 @@ Duplicate track (separate model): TF-IDF → sentence embeddings → (stretch) f
 ## 4. Repository structure
 
 ```text
-neural-triage/
+pointsman/
 ├── CONTEXT.md                   # Glossary (domain language only)
 ├── docs/adr/                    # Architecture decision records
 ├── data/                        # Git-ignored
@@ -260,7 +262,7 @@ neural-triage/
 
 **Learn:** affine INT8 quantization (scale, zero-point); serving trade-offs (DMLS ch. 7).
 
-**Checkpoint:** `docker run -p 8000:8000 neural-triage` serves `/triage`; P50/P95 latency by length bucket is reported.
+**Checkpoint:** `docker run -p 8000:8000 pointsman` serves `/triage`; P50/P95 latency by length bucket is reported.
 
 ---
 

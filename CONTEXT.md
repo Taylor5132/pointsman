@@ -1,4 +1,4 @@
-# Neural Triage
+# Pointsman
 
 Predicts which Flutter team should own a newly filed GitHub issue, and decides whether that prediction is trustworthy enough to act on without a person checking it.
 

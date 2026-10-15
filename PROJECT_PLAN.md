@@ -1,204 +1,323 @@
-# Neural Triage: Automated GitHub Issue Routing & Duplicate Detection Engine
+# Neural Triage: Team Routing & Duplicate Detection for `flutter/flutter`
 
-An end-to-end production machine learning system that ingests live GitHub issues, prevents temporal data leakage via DuckDB, benchmarks a classical LightGBM model against a LoRA-fine-tuned `ModernBERT` Transformer, and serves calibrated routing probabilities + 768-dimensional semantic duplicate vectors in under 15ms via an INT8-quantized ONNX microservice.
+A learning-first, production-minded ML system that predicts which Flutter **Team** should own a new GitHub Issue, decides whether that prediction is trustworthy enough to **Auto-assign**, finds likely **Duplicates**, and keeps working when Flutter reorganizes its Teams.
+
+- Vocabulary: [CONTEXT.md](CONTEXT.md). Capitalized terms (Team, Routed Issue, Weak Label, …) are defined there.
+- Decisions: [docs/adr/](docs/adr/). Start with [ADR 0001: Team identity](docs/adr/0001-team-identity.md).
 
 ---
 
-## 1. System Architecture & Target Spec
+## 0. How to use this plan
+
+- **Order, not dates.** Milestones are listed in dependency order and have no deadlines. Move on when a milestone's checkpoint is met, not when time runs out. The one exception is **Live Evaluation (Milestone 2)**: it runs on real calendar time, so start it as soon as the data pipeline works and leave it running.
+- **Checkpoints are measurements, not targets.** No result is predicted in advance. A checkpoint asks you to produce a number and explain it. The only pass/fail checks are correctness tests, such as "no test-period Issue appears in training".
+- **Who writes what.** Tasks tagged **[You]** are ML work you write yourself: features, training loops, metrics, calibration, analysis. Tasks tagged **[Scaffold]** are plumbing that AI may draft and you review, modify and must be able to explain: API clients, Docker, FastAPI boilerplate.
+- **Top-down, with one bottom-up anchor.** Theory is studied just before you need it. Milestone 0 is the single exception: building logistic regression from scratch makes everything later make sense.
+
+---
+
+## 1. Problem & scope
+
+| Decision | Choice |
+|---|---|
+| Repository | `flutter/flutter`: large, active, with real `team-*` routing labels and a written [Triage Rulebook](https://github.com/flutter/flutter/blob/master/docs/triage/README.md) |
+| Prediction target | One **In-scope Team** per Issue: engine, tool, design, framework, web, android, ios, ecosystem (the Rulebook requires "one and only one" `team-*` label) |
+| Excluded | `team-infra` (internal CI reports). **Out-of-scope Teams** (accessibility, text-input, linux, macos, windows, devexp, fluttergpu) are never trained on; their Issues test whether the system sends unfamiliar work to Human review |
+| Issues | Open **and** closed, written by people (not bots), created on or after **2023-07-06**, the date the In-scope Team labels were created |
+| Expected size | ~20k labeled Issues (measured 2026-10-14: 12,289 closed + 10,984 open across the 8 Teams, all dates) |
+| Team identity | The permanent label ID, interpreted through a dated **Taxonomy Version**. See ADR 0001 |
+| Dropped features | `author_association` (it probably shows the author's role today, not when they filed; leakage risk). The body text may have been edited after filing; this is a documented limitation |
+
+### Facts measured during planning (2026-10-14/15, small samples)
+
+- About 60% of recently labeled In-scope Issues were **Self-labeled** by their author at filing time, mostly Flutter contributors. About 40% were **Routed** by someone else, usually within a day. No bot applied any Team label.
+- Roughly 100–175 new Issues per week, of which about 30–40 per week become Routed In-scope Issues.
+- Team Splits and the Rulebook updates that followed them: accessibility (label 2024-08-14 → rule 2024-08-16); linux/macos/windows (label 2024-06-05 → rule 2024-06-10).
+- Duplicates are marked with the `r: duplicate` label (7,601 closed) and a triager comment such as "Closing this as a duplicate of #N".
+
+---
+
+## 2. System architecture
 
 ```text
-[GitHub GraphQL API] 
+[GitHub GraphQL API] ──────────────► [Label Event source]
+       │  (snapshots)                  production: webhook  |  this project: ~15-min poller
+       ▼                                        │
+[Snapshot folders + manifest] ──► [DuckDB]      ├─► Team Split detector ──► alert ──► human approves new Taxonomy Version
+       │                                        └─► Live collector (frozen Issue text, labels fetched only on scoring day)
+       ▼
+Temporal split (70 / 15 / 15 by created_at)
        │
-       ▼ (Phase 1: Prefect + Pydantic + Regex Parser)
-[DuckDB / Parquet Feature Store] ──► Strict Temporal Split (Train / Val / Test)
-       │
-       ├──► (Phase 2: Classical Baseline) ──► TF-IDF + Metadata + LightGBM (Macro F1: ~0.72)
-       │
-       └──► (Phase 3: Deep Fine-Tuning)   ──► ModernBERT-base + LoRA (Macro F1: ~0.88)
-                                                     │
-       ┌─────────────────────────────────────────────┘
-       ▼ (Phase 4: Merge LoRA -> ONNX INT8 Quantization + Temperature Calibration)
-[FastAPI Production Server (POST /triage)] ──► P95 Latency: ~15ms on CPU
-       │
-       ├──► 1. Team Routing Probabilities (8 Engineering Teams)
-       ├──► 2. Semantic Vector Search in DuckDB (Flags Duplicate Bugs >= 0.88 Cosine Sim)
-       └──► 3. Confidence Gate:
-               ├─ If max(P) >= 0.65 ──► AUTO_ASSIGN Ticket
-               └─ If max(P) <  0.65 ──► HUMAN_REVIEW_QUEUE ──► Feeds back to DuckDB for Retraining
-```
+       ├─► Baselines: keyword rules → TF-IDF + LogReg → TF-IDF + metadata + LightGBM
+       └─► ModernBERT-base + LoRA (Team classifier)
+                    │
+                    ├─► Temperature calibration ──► Confidence Cutoff (from 90% Accuracy Goal)
+                    └─► Team Prototypes (embedding space) ──► "unlike any known Team" signal
+Duplicate track (separate model): TF-IDF → sentence embeddings → (stretch) fine-tuned on Duplicate pairs
 
-### Core Specifications
-* **Target Repository:** `microsoft/vscode` or `pytorch/pytorch` (30,000–50,000 historical closed issues with component labels).
-* **Multi-Task Outputs (Single Forward Pass):**
-  1. **Component Classification:** Calibrated probability distribution across 8 core engineering teams.
-  2. **Duplicate Detection:** 768-dimensional pooled semantic vector queried via Cosine Similarity against existing open issues.
-  3. **Uncertainty Gate:** Automatic fallback to a human review queue when maximum calibrated Softmax probability is `< 0.65`.
-* **Hardware Budget ($0 Cost):**
-  * **Local CPU:** Data engineering, DuckDB, LightGBM baseline, ONNX quantization, FastAPI serving, Docker containerization.
-  * **Free Cloud GPU (Google Colab T4 / Kaggle):** Phase 3 LoRA fine-tuning (~25–40 minutes).
+[FastAPI POST /triage] (ONNX INT8, CPU)
+   ├─► Team probabilities (calibrated)
+   ├─► Routing Decision: Auto-assign | Human review
+   │      Human review only if: below Confidence Cutoff, OR far from every Team Prototype
+   └─► Top-k candidate Originals (Duplicate search)
+[POST /feedback] ──► human-corrected Team ──► retraining data
+```
 
 ---
 
-## 2. Production Repository Structure
+## 3. Evaluation protocol
+
+1. **Temporal split.** Sort by `created_at`: oldest 70% train, next 15% validation, newest 15% test. The **test set is opened exactly once**, in Milestone 10.
+2. **Headline metric** is Macro F1 on **Routed Issues**. Self-labeled Issues are used for training but would inflate results. Also report per-Team F1 and the **Confirmed Team** subset (Issues that also carry `triaged-<team>`).
+3. **Routing Decision.** The Confidence Cutoff is derived on validation data so that Auto-assigned Issues are **≥ 90% correct** (the Accuracy Goal). Report **Coverage** at that goal, and plot the Coverage-versus-accuracy curve with 80% and 95% marked.
+4. **Replay Experiment.** Using only train and validation periods: review the N least-confident Issues (their real triager labels) and retrain. Compare against reviewing N random Issues.
+5. **Live Evaluation.** Collect new Issues that have no Team label yet and freeze their text. Every model predicts on them. **Labels are never fetched until scoring day.** The scoring rule (for example "≥ 200 Routed Issues labeled") is written down before any results are seen.
+6. **Latency.** One Issue at a time, after warm-up, on the Mac and inside Docker, using real Issue lengths. Report P50/P95 by input-length bucket. Experiment with max length 512 / 1,024 / 2,048 tokens for F1 versus latency.
+7. **Team Split resilience.** Backtest on the 2024-08-14 accessibility split, and optionally the 2024-06-05 desktop split: detection lag, the share of post-split Issues sent to Human review versus wrongly Auto-assigned, accuracy of the new Team from Weak Labels, and **Coverage Recovery** time.
+8. **Duplicates.** Recall@5: for each Duplicate, is its Original among the top 5 candidates?
+
+---
+
+## 4. Repository structure
 
 ```text
 neural-triage/
-├── data/                        # Git-ignored local storage
-│   ├── raw/                     # Raw JSON batches from GitHub API
-│   ├── processed/               # train.parquet, val.parquet, test.parquet
-│   └── triage.duckdb            # Analytical store & 768-d vector index
-├── models/                      # Saved model artifacts
-│   ├── baseline/                # tfidf.joblib, lgbm_model.txt
-│   ├── modernbert_lora/         # adapter_model.safetensors, tokenizer.json
-│   └── onnx/                    # triage_model_int8.onnx, calibration_temp.json
-├── notebooks/                   # Exploration & Colab GPU training
-│   ├── 01_eda_and_leakage.ipynb
-│   ├── 02_error_analysis.ipynb
-│   └── 03_colab_lora_finetune.ipynb
+├── CONTEXT.md                   # Glossary (domain language only)
+├── docs/adr/                    # Architecture decision records
+├── data/                        # Git-ignored
+│   ├── snapshots/<YYYY-MM-DD>/  # Raw + cleaned Parquet, manifest.json (date, Taxonomy Version, row counts)
+│   ├── live/                    # Frozen live Issues + logged predictions
+│   └── triage.duckdb
+├── models/                      # Git-ignored artifacts (baseline, LoRA adapter, ONNX, calibration)
+├── notebooks/
+│   ├── 00_logreg_from_scratch.ipynb
+│   ├── 01_eda.ipynb
+│   ├── 02_baseline_error_analysis.ipynb
+│   ├── 03_colab_lora_finetune.ipynb
+│   └── 04_split_backtest.ipynb
 ├── src/
-│   ├── pipeline/                # Phase 1: Data Engineering
-│   │   ├── schemas.py           # Pydantic models for raw & cleaned issues
-│   │   ├── ingest.py            # Async GitHub GraphQL/REST fetcher
-│   │   ├── clean.py             # Regex parser (separates prose vs stack traces)
-│   │   └── split.py             # Temporal split & DuckDB Parquet exporter
-│   ├── baseline/                # Phase 2: Classical ML
-│   │   ├── features.py          # TF-IDF + tabular metadata ColumnTransformer
-│   │   └── train_lgbm.py        # Logistic Regression & LightGBM + MLflow logging
-│   ├── finetune/                # Phase 3: Deep Learning & LoRA
-│   │   ├── dataset.py           # Hugging Face Dataset & tokenization wrapper
-│   │   ├── model.py             # ModernBERT + PEFT LoRA config + pooling head
-│   │   └── train.py             # PyTorch/HF Trainer with Macro-F1 evaluation
-│   └── serving/                 # Phase 4: Production Inference & Loop
-│       ├── export_onnx.py       # Merge LoRA -> Export ONNX -> Quantize INT8
-│       ├── calibrate.py         # Temperature scaling optimizer
-│       └── app.py               # FastAPI server (/triage & /feedback endpoints)
-├── tests/                       # Pytest suite for data cleaning & API routes
-├── Dockerfile                   # Lightweight CPU production container
-├── pyproject.toml               # Dependencies managed via uv / poetry
-└── PROJECT_PLAN.md              # Master roadmap and architectural spec
+│   ├── pipeline/                # schemas.py, ingest.py, clean.py, snapshot.py, change_log.py, split.py
+│   ├── events/                  # source.py (interface), poller.py, detector.py
+│   ├── live/                    # collect.py, predict.py, score.py
+│   ├── baseline/                # features.py, train.py
+│   ├── finetune/                # dataset.py, model.py, train.py
+│   ├── embeddings/              # prototypes.py, duplicates.py
+│   ├── resilience/              # weak_labels.py, backtest.py
+│   ├── evaluation/              # metrics.py, calibrate.py, cutoff.py, replay.py
+│   └── serving/                 # export_onnx.py, app.py
+├── flows/                       # Prefect flows (event polling, live collection)
+├── tests/
+├── Dockerfile
+└── pyproject.toml               # Managed with uv
 ```
 
 ---
 
-## 3. The 5-Week Execution & Learning Roadmap
+## 5. Milestones (dependency order)
 
-### Phase 1 (Week 1): Data Pipeline, Validation, & Leak-Free Temporal Splitting
+### Milestone 0: Foundations
 
-#### Engineering Tasks
-- [ ] **Initialize Project:** Set up `pyproject.toml` with `duckdb`, `pyarrow`, `pydantic`, `httpx`, `prefect` (or `dagster`), and `scikit-learn`.
-- [ ] **Build `src/pipeline/ingest.py`:** Fetch 30,000+ closed issues from GitHub GraphQL API (`title`, `body`, `created_at`, `author_association`, `labels`).
-- [ ] **Build `src/pipeline/schemas.py` & `clean.py`:**
-  - Validate payloads with Pydantic.
-  - Strip HTML comments (`<!-- ... -->`) and bot boilerplate.
-  - Extract fenced code blocks (` ```...``` `) and stack traces into a separate `code_blocks` column so natural language and code can be formatted cleanly.
-  - Filter and map noisy repository labels into 8 canonical engineering team classes.
-- [ ] **Build `src/pipeline/split.py`:** Load cleaned data into DuckDB and sort strictly by `created_at` (ascending):
-  - `train.parquet`: Oldest 70% of issues
-  - `val.parquet`: Next 15% of issues ( chronologically after `train`)
-  - `test.parquet`: Most recent 15% of issues (locked away until final evaluation)
+**Prerequisites:** none.
 
-#### ML Theory Curriculum (Just-in-Time Study)
-- [ ] **Temporal Data Leakage:** Understand why random `train_test_split` leaks future bug outbreaks into training data and artificially inflates validation metrics.
-- [ ] **Class Imbalance & Label Noise:** Analyze label distribution skew in DuckDB and compute inverse class weights.
-- [ ] **Resources:** *Designing Machine Learning Systems* by Chip Huyen (Ch. 3 & 4); *StatQuest: Training, Validation, and Test Sets*.
+- [ ] **[You] Python gaps:** virtual environments with `uv`, `pathlib`, list/dict comprehensions, `dataclasses`, type hints, reading a traceback, writing a pytest test.
+- [ ] **[You] numpy & pandas:** arrays, shapes, broadcasting, vectorized operations; DataFrames, filtering, `groupby`, joins.
+- [ ] **[You] Math refresh:** vectors, dot product, matrix multiplication, partial derivatives, gradient, chain rule, exponent/log, probability, softmax.
+- [ ] **[You] Logistic regression from scratch** in numpy: sigmoid/softmax, cross-entropy loss, its gradient, a gradient-descent loop, and a train/validation split.
 
-#### Phase 1 Checkpoint
-- [ ] Running `python -m src.pipeline.split` outputs `train.parquet`, `val.parquet`, and `test.parquet` where `max(train.created_at) < min(val.created_at) < min(test.created_at)`.
+**Learn:** 3Blue1Brown *Essence of Linear Algebra* (ch. 1–4, 9) and *Neural Networks* (ch. 1–2); StatQuest *Logistic Regression* and *Gradient Descent*.
+
+**Checkpoint:** your from-scratch model reaches accuracy close to `sklearn.linear_model.LogisticRegression` on a toy dataset, and you can explain each line of the gradient update.
 
 ---
 
-### Phase 2 (Week 2): Classical ML Baseline & Error Analysis
+### Milestone 1: Data pipeline
 
-#### Engineering Tasks
-- [ ] **Build `src/baseline/features.py`:** Create a feature pipeline combining:
-  - **Unstructured Text:** `TfidfVectorizer(max_features=15000, ngram_range=(1, 2), sublinear_tf=True)`
-  - **Structured Metadata:** `title_char_len`, `body_char_len`, `num_code_blocks`, `has_stack_trace`, `is_member_or_contributor`
-- [ ] **Build `src/baseline/train_lgbm.py`:**
-  - Train a balanced `LogisticRegression` model and a `LightGBM` (`LGBMClassifier`) model on `train.parquet`.
-  - Track training duration, single-sample CPU latency, Confusion Matrix, and **Macro F1-Score** on `val.parquet` using **MLflow**.
-- [ ] **Complete `notebooks/02_error_analysis.ipynb`:**
-  - Inspect the top 30 high-confidence errors made by LightGBM.
-  - Document specific failure modes (e.g., keyword collision where a user mentions `"terminal"` in the prose, but the stack trace originates in `"extension-host"`).
+**Prerequisites:** M0.
 
-#### ML Theory Curriculum (Just-in-Time Study)
-- [ ] **Sparse Representations:** TF-IDF math and bag-of-words limitations (loss of word order and long-range code dependency).
-- [ ] **Linear Classification & Cross-Entropy Loss:**
-  $$\mathcal{L} = -\sum_{i=1}^{K} y_i \log(\hat{y}_i)$$
-- [ ] **Gradient Boosted Decision Trees (GBDT):** How LightGBM fits sequential decision trees to the negative gradients (residual errors) of the loss function.
-- [ ] **Evaluation Metrics:** Precision vs. Recall, Precision-Recall AUC, and why **Macro F1** is superior to Accuracy for multi-class imbalanced problems.
-- [ ] **Resources:** *StatQuest: Logistic Regression*, *StatQuest: Gradient Boost*, *StatQuest: Confusion Matrix & F1 Score*.
+- [ ] **[Scaffold] `ingest.py`:** GraphQL fetch of In-scope and Out-of-scope Issues created on or after 2023-07-06, open and closed. Fields: title, body, created_at, author (and whether it is a bot), labels **with label IDs**, Team **Label Events** (who applied which label and when), `triaged-*` labels, and comments on `r: duplicate` Issues.
+- [ ] **[You] `schemas.py` + `clean.py`:** Pydantic validation; strip HTML comments and template boilerplate; split prose from fenced code blocks and stack traces; derive the target Team; mark each Issue as **Routed** or **Self-labeled** (from who applied the first Team label); parse Duplicate → Original links.
+- [ ] **[You] `snapshot.py`:** write each download to `data/snapshots/<date>/` with a manifest (snapshot date, Taxonomy Version, row counts per Team). Manual versioning; DVC is postponed.
+- [ ] **[You] `change_log.py`:** build the **Team Change Log** from label creation dates and the git history of `docs/triage/README.md`.
+- [ ] **[You] `split.py`:** load into DuckDB and produce the 70 / 15 / 15 temporal split.
+- [ ] **[You] Tests:** split boundary; no Issue in more than one split; Duplicate-comment parser; bot filtering.
 
-#### Phase 2 Checkpoint
-- [ ] Saved `lgbm_model.txt` achieving ~0.68–0.74 Macro F1 on `val.parquet` with < 5ms inference latency and documented error patterns.
+**Learn:** temporal leakage; label noise; class imbalance. Chip Huyen, *Designing Machine Learning Systems* (DMLS) ch. 3–4.
+
+**Checkpoint:** `python -m src.pipeline.split` passes `max(train.created_at) < min(val.created_at)` and `max(val.created_at) < min(test.created_at)`, and the manifest's row counts match DuckDB.
 
 ---
 
-### Phase 3 (Weeks 3–4): Fine-Tuning ModernBERT with LoRA & Vector Search
+### Milestone 2: Event-driven collection & Live Evaluation (start right after M1, keep running)
 
-#### Engineering Tasks
-- [ ] **Build `src/finetune/dataset.py`:**
-  - Format inputs as: `"[TITLE] {title} \n [PROSE] {clean_body} \n [CODE] {code_blocks}"`.
-  - Tokenize using `answerdotai/ModernBERT-base` with `max_length=2048` (leveraging RoPE and local-global attention so stack traces are never truncated at 512 tokens).
-- [ ] **Build `src/finetune/model.py`:**
-  - Load `AutoModelForSequenceClassification.from_pretrained("answerdotai/ModernBERT-base", num_labels=8)`.
-  - Configure Hugging Face `peft` `LoraConfig`:
-    - `r=16`, `lora_alpha=32`, `lora_dropout=0.05`
-    - `target_modules=["Wqkv", "Wo", "Wi"]`
-  - Verify trainable parameters represent `< 2%` of total model parameters.
-- [ ] **Build `src/finetune/train.py` (Run on Colab T4 / Kaggle GPU):**
-  - Train for 3 epochs using `AdamW`, `lr=2e-4`, linear warmup (`warmup_ratio=0.1`), cosine learning rate schedule, `bf16=True` (or `fp16=True`), and class-weighted Cross-Entropy loss.
-  - Log validation Macro F1 every 250 steps and save best LoRA adapter weights (`adapter_model.safetensors`).
-- [ ] **Build Duplicate Vector Index in DuckDB:**
-  - Extract the normalized 768-dimensional pooled hidden state (`[CLS]` / mean pooling before the classifier head) for open issues and store them in DuckDB using its `ARRAY` / `FLOAT[768]` vector similarity functions (`array_cosine_similarity`).
+**Prerequisites:** M1.
 
-#### ML Theory Curriculum (Just-in-Time Study)
-- [ ] **Subword Tokenization & Embeddings:** How Byte-Pair Encoding (BPE) handles unseen function names and hexadecimal memory addresses.
-- [ ] **Scaled Dot-Product Self-Attention:**
-  $$\text{Attention}(Q, K, V) = \text{softmax}\left(\frac{QK^T}{\sqrt{d_k}}\right)V$$
-- [ ] **Low-Rank Adaptation (LoRA):** Freezing pretrained weight matrix $W_0 \in \mathbb{R}^{d \times k}$ and learning low-rank matrices $A \in \mathbb{R}^{r \times k}$ and $B \in \mathbb{R}^{d \times r}$ where $r \ll d$:
-  $$h = W_0 x + \frac{\alpha}{r} B A x$$
-- [ ] **Vector Spaces & Cosine Similarity:** Why fine-tuned domain embeddings cluster duplicate bugs far better than generic off-the-shelf embeddings.
-- [ ] **Resources:** *3Blue1Brown: Attention in Transformers*; *Hugging Face Course (Ch. 2, 3, & PEFT docs)*.
+- [ ] **[You] `events/source.py`:** a **Label Event source interface**. Implement a poller that queries every ~15 minutes and backfills by timestamp after any downtime. Document that production would plug a GitHub webhook (`label`, `issues.labeled`) into the same interface.
+- [ ] **[You] `events/detector.py`:** raise an alert on a new `team-*` label or a Triage Rulebook commit, and append it to the Team Change Log. A human approves any new Taxonomy Version.
+- [ ] **[You] `live/collect.py`:** store new Issues that have no Team label, with their text frozen at collection time.
+- [ ] **[Scaffold] Prefect flow** wrapping the poller and collector (introduce Prefect once the plain scripts work).
+- [ ] **[You] Measure** real weekly volume and time until labeling, then **write the live scoring rule** into this plan before any predictions are scored.
 
-#### Phase 3 Checkpoint
-- [ ] Fine-tuned `ModernBERT + LoRA` model beats the LightGBM baseline by `+0.12 to +0.16 Macro F1` on `val.parquet` (~0.86+ Macro F1) and retrieves true duplicate issues in top-3 Cosine Similarity matches.
+**Learn:** event-driven versus polling architectures; why prospective evaluation cannot leak.
+
+**Checkpoint:** the flow runs unattended; the scoring rule is committed to git.
 
 ---
 
-### Phase 4 (Week 5): ONNX INT8 Quantization, Calibration, & FastAPI Microservice
+### Milestone 3: Exploratory analysis
 
-#### Engineering Tasks
-- [ ] **Build `src/serving/export_onnx.py`:**
-  - Merge LoRA weights into the base model via `model = model.merge_and_unload()`.
-  - *Implementation Note for ModernBERT:* Set `model.config.reference_compile = False` and `attn_implementation="eager"` prior to ONNX export so PyTorch tracing doesn't collide with Triton/Dynamo compilation.
-  - Export to ONNX and apply **INT8 Dynamic Quantization** via `onnxruntime.quantization.quantize_dynamic`.
-  - Verify artifact size drops from ~595 MB (`FP32`) to **~148 MB (`INT8`)** and verify Macro F1 drop on `test.parquet` is `< 0.01`.
-- [ ] **Build `src/serving/calibrate.py`:**
-  - Fit a single scalar Temperature parameter $T$ using L-BFGS on `val.parquet` logits to minimize Expected Calibration Error (ECE):
-    $$P(\text{class}_i) = \frac{\exp(z_i / T)}{\sum_{j=1}^{K} \exp(z_j / T)}$$
-- [ ] **Build `src/serving/app.py` (FastAPI):**
-  - `POST /triage`: Cleans raw issue JSON, runs single ONNX Runtime session (`CPUExecutionProvider`), returns calibrated team probabilities, queries DuckDB for top duplicate issue (`cosine_similarity >= 0.88`), and returns `AUTO_ASSIGN` if `max(P) >= 0.65` or `HUMAN_REVIEW_QUEUE` if `max(P) < 0.65`.
-  - `POST /feedback`: Logs human-corrected labels for low-confidence predictions into DuckDB's `retraining_feedback` table.
-- [ ] **Build `Dockerfile`:** Containerize the FastAPI app + `onnxruntime` + `triage_model_int8.onnx` (excluding heavy PyTorch/CUDA dependencies from the serving image).
+**Prerequisites:** M1.
 
-#### ML Theory Curriculum (Just-in-Time Study)
-- [ ] **Post-Training Quantization (FP32 to INT8):** Affine quantization scale and zero-point math for fast CPU SIMD instructions.
-- [ ] **Confidence Calibration:** Why modern neural networks are overconfident and how Temperature Scaling fixes probability reliability for downstream business rules.
-- [ ] **Active Learning & Continual Retraining:** Uncertainty sampling and closing the data flywheel.
+- [ ] **[You] `01_eda.ipynb`:** Team distribution; Routed versus Self-labeled share per Team; open/closed mix across splits; how often Team labels change (bounces between Teams); monthly Team volume with Team Split dates overlaid; Issue length distribution in tokens.
 
-#### Phase 4 Checkpoint
-- [ ] `docker run -p 8000:8000 neural-triage` starts cleanly and serves `POST /triage` requests in **< 20ms P95 latency** on CPU.
+**Checkpoint:** a written list of the 5 findings that most affect modeling choices.
 
 ---
 
-## 4. Final Benchmark Scorecard (Update Upon Completion)
+### Milestone 4: Classical baselines
 
-Evaluate every stage on the locked `test.parquet` split and publish this table at the top of your `README.md`:
+**Prerequisites:** M3.
 
-| Model Architecture | Context Window | Test Macro F1 | P95 CPU Latency | Disk Size | Duplicate Vector Search |
+- [ ] **[You] Keyword-rule baseline** derived from the Triage Rulebook.
+- [ ] **[You] `features.py`:** `TfidfVectorizer` on prose and code, plus metadata (lengths, number of code blocks, has stack trace).
+- [ ] **[You] `train.py`:** class-weighted LogisticRegression and LightGBM, tracked in **MLflow** (introduce it here). Report Macro F1 on Routed validation Issues, per-Team F1, the Confirmed subset, the confusion matrix and single-Issue latency.
+- [ ] **[You] `02_baseline_error_analysis.ipynb`:** inspect the 30 most confident errors; classify each as model error, ambiguous per the Rulebook, or likely label noise.
+- [ ] **[You] Live:** the baseline starts predicting on collected live Issues.
+
+**Learn:** TF-IDF and bag-of-words limits; linear classification and cross-entropy $\mathcal{L} = -\sum_i y_i \log \hat{y}_i$; gradient-boosted trees; precision/recall, Macro F1 versus accuracy. StatQuest *Gradient Boost*, *Confusion Matrix*, *F1*. DMLS ch. 6.
+
+**Checkpoint:** baseline results in MLflow, explained by Team, with error categories documented.
+
+---
+
+### Milestone 5: Fine-tuning ModernBERT with LoRA
+
+**Prerequisites:** M4.
+
+- [ ] **[You] `dataset.py`:** input `"[TITLE] … [PROSE] … [CODE] …"`; tokenize with `answerdotai/ModernBERT-base`; dynamic padding.
+- [ ] **[You] `model.py`:** `AutoModelForSequenceClassification(num_labels=8)` plus PEFT `LoraConfig(task_type="SEQ_CLS", r=16, lora_alpha=32, lora_dropout=0.05, target_modules=["Wqkv", "Wo", "Wi"])`. Print the trainable-parameter share and explain it.
+- [ ] **[You] `train.py`** (Colab/Kaggle T4): AdamW, warmup plus cosine schedule, **`fp16=True`** (T4 does not support bf16), class-weighted cross-entropy, Macro F1 evaluation, checkpointing (free sessions disconnect).
+- [ ] **[You] Length experiment:** max length 512 / 1,024 / 2,048 tokens for F1 versus training cost.
+- [ ] **[You] Live:** the fine-tuned model also predicts on every live Issue.
+
+**Learn:** subword tokenization; embeddings; self-attention $\text{softmax}(QK^T/\sqrt{d_k})V$; LoRA $h = W_0x + \frac{\alpha}{r}BAx$. 3Blue1Brown *Attention in Transformers*; Hugging Face Course ch. 2–3; PEFT docs.
+
+**Checkpoint:** comparison table against the baseline (overall and per Team), with an explanation of where fine-tuning helps and where it does not.
+
+---
+
+### Milestone 6: Embeddings & Duplicate detection
+
+**Prerequisites:** M5 (fine-tuned encoder), M1 (Duplicate pairs).
+
+- [ ] **[You] TF-IDF cosine** retrieval baseline.
+- [ ] **[You] Off-the-shelf sentence-embedding model** (for example from `sentence-transformers`), stored in DuckDB as `FLOAT[d]` arrays and searched with `array_cosine_similarity`.
+- [ ] **[You] (Stretch)** fine-tune the embedding model on Duplicate pairs with a contrastive loss.
+
+**Learn:** vector spaces, cosine similarity, why classification embeddings cluster by Team rather than by "same bug", contrastive learning, Recall@k.
+
+**Checkpoint:** Recall@5 at each step, with failure examples.
+
+---
+
+### Milestone 7: Calibration & Contain
+
+**Prerequisites:** M5, M6.
+
+- [ ] **[You] `calibrate.py`:** fit a temperature $T$ by **minimizing NLL** on validation logits, $P_i = \frac{e^{z_i/T}}{\sum_j e^{z_j/T}}$; report ECE and reliability diagrams before and after.
+- [ ] **[You] `cutoff.py`:** derive the Confidence Cutoff for the **90% Accuracy Goal**; plot Coverage versus accuracy (80 / 90 / 95% marked).
+- [ ] **[You] `prototypes.py`:** **Team Prototypes**; add the "far from every Team" signal to the Routing Decision.
+- [ ] **[You] Out-of-scope check:** the share of Out-of-scope Team Issues that end up in Human review (good) versus wrongly Auto-assigned (bad), with and without the prototype signal.
+
+**Learn:** why neural networks are overconfident (Guo et al., 2017, *On Calibration of Modern Neural Networks*); selective prediction; prototype-based classification (Snell et al., 2017, *Prototypical Networks*).
+
+**Checkpoint:** Coverage at 90% accuracy on validation, plus Out-of-scope containment rates.
+
+---
+
+### Milestone 8: Team Split resilience
+
+**Prerequisites:** M7, M1 (Team Change Log).
+
+- [ ] **[You] `weak_labels.py`:** turn a new Team's Rulebook rule into code; apply it to the historical Issues of the Teams it took work from; filter matches by embedding similarity. Store the results as marked **Weak Labels** (training only, per the ADR 0001 amendment).
+- [ ] **[You] `04_split_backtest.ipynb`:** replay the 2024-08-14 accessibility split using only pre-split training data. Compare **(A)** waiting for N real labels, **(B)** description-only zero-shot, and **(C)** Rulebook plus old-Team history (Weak Labels), scored against real post-split labels. Measure detection lag, containment, the new-Team learning curve, and **Coverage Recovery**.
+- [ ] **[You] Pre/post training comparison:** two LightGBM models of equal size, trained before and after the split, evaluated on the same test window.
+- [ ] **[You]** set the retraining trigger N from the learning curve.
+
+**Learn:** concept drift and monitoring (DMLS ch. 8–9); weak supervision (Ratner et al., 2017, *Snorkel*); few-shot learning.
+
+**Checkpoint:** a backtest report stating, from data, how quickly the system detected the split and recovered, and whether (C) beats (B).
+
+---
+
+### Milestone 9: Serving
+
+**Prerequisites:** M7 (M8 optional for the first deploy).
+
+- [ ] **[You] `export_onnx.py`:** merge LoRA (`merge_and_unload()`), export to ONNX (if tracing fails, try `attn_implementation="eager"` and `reference_compile=False`), apply `onnxruntime.quantization.quantize_dynamic` INT8. Measure size and the F1 change on **validation**.
+- [ ] **[Scaffold] `app.py`:** `POST /triage` (clean → Team model → calibrated probabilities → Routing Decision → Duplicate candidates) and `POST /feedback`.
+- [ ] **[Scaffold] `Dockerfile`:** CPU-only image with `onnxruntime`, without PyTorch/CUDA.
+- [ ] **[You] Latency report** per the protocol in §3.6.
+
+**Learn:** affine INT8 quantization (scale, zero-point); serving trade-offs (DMLS ch. 7).
+
+**Checkpoint:** `docker run -p 8000:8000 neural-triage` serves `/triage`; P50/P95 latency by length bucket is reported.
+
+---
+
+### Milestone 10: Final evaluation & write-up
+
+**Prerequisites:** all above; the live scoring rule from M2 is satisfied.
+
+- [ ] **[You] Replay Experiment** (`replay.py`): low-confidence versus random review.
+- [ ] **[You] Live scoring** per the pre-written rule: baseline versus fine-tuned on the same frozen Issues.
+- [ ] **[You] Open the test set once**; fill in the scorecard.
+- [ ] **[You] README:** scorecard, Coverage curve, split backtest, limitations.
+
+**Learn:** active learning and uncertainty sampling; communicating results honestly.
+
+**Checkpoint:** README published with measured numbers only.
+
+---
+
+## 6. Stretch goals
+
+- **LLM benchmark (D):** an LLM given the full Triage Rulebook routes Issues zero-shot, compared against approaches A–C in M8 and against the fine-tuned model.
+- Zero-shot Team Prototypes initialized from Rulebook descriptions.
+- Multi-label routing (version B of the target).
+- DVC, if manual snapshot versioning proves painful.
+- A webhook-based Label Event source on a repo you control.
+
+---
+
+## 7. Known limitations (keep updated)
+
+- Issue bodies are fetched as they are today, not as originally filed.
+- The Replay Experiment uses real triager labels but cannot model reviewer error or automation bias (reviewers accepting the model's suggestion).
+- Weak Labels come from this project's interpretation of the Rulebook, not from triagers.
+- As an outsider, Label Events are polled, not pushed; detection lag includes any time the poller was down.
+- Self-labeled Issues may differ in style from external user reports.
+
+---
+
+## 8. Final scorecard (fill in from measurements only)
+
+| Model | Max input length | Routed-Issue Macro F1 (test) | Coverage @ 90% accuracy | P50 / P95 CPU latency | Size |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **1. Keyword / Regex Rules** | N/A | `0.48` *(est)* | `1 ms` | `< 1 MB` | No |
-| **2A. TF-IDF + Logistic Regression** | Bag-of-Words | `0.67` *(est)* | `2 ms` | `12 MB` | No |
-| **2B. TF-IDF + Metadata + LightGBM** | Bag-of-Words | `0.73` *(est)* | `4 ms` | `18 MB` | No |
-| **3. ModernBERT-base + LoRA (FP32)** | 2,048 tokens | `0.87` *(est)* | `58 ms` | `595 MB` | Yes (768-d embedding) |
-| **4. ModernBERT Merged + ONNX INT8** | 2,048 tokens | **`0.86`** *(est)* | **`15 ms`** | **`148 MB`** | **Yes (768-d embedding)** |
+| Keyword rules | N/A | | | | |
+| TF-IDF + LogReg | Bag-of-words | | | | |
+| TF-IDF + metadata + LightGBM | Bag-of-words | | | | |
+| ModernBERT + LoRA (FP32) | | | | | |
+| ModernBERT merged, ONNX INT8 | | | | | |
+
+| Duplicate retrieval | Recall@5 |
+| :--- | :--- |
+| TF-IDF cosine | |
+| Off-the-shelf embeddings | |
+| Fine-tuned embeddings (stretch) | |
+
+| Split backtest (accessibility, 2024-08-14) | Value |
+| :--- | :--- |
+| Detection lag | |
+| Post-split Issues contained in Human review | |
+| New-Team F1: (A) wait / (B) description / (C) Weak Labels | |
+| Coverage Recovery | |

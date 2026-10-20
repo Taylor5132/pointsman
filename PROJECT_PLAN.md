@@ -13,8 +13,8 @@ An open-source ML system that predicts which Flutter **Team** should own a new G
 
 - **Order, not dates.** Milestones are listed in dependency order and have no deadlines. Move on when a milestone's checkpoint is met, not when time runs out. The one exception is **Live Evaluation (Milestone 2)**: it runs on real calendar time, so start it as soon as the data pipeline works and leave it running.
 - **Checkpoints are measurements, not targets.** No result is predicted in advance. A checkpoint asks you to produce a number and explain it. The only pass/fail checks are correctness tests, such as "no test-period Issue appears in training".
-- **Who writes what.** Tasks tagged **[You]** are ML work you write yourself: features, training loops, metrics, calibration, analysis. Tasks tagged **[Scaffold]** are plumbing that AI may draft and you review, modify and must be able to explain: API clients, Docker, FastAPI boilerplate.
-- **Top-down, with one bottom-up anchor.** Theory is studied just before you need it. Milestone 0 is the single exception: building logistic regression from scratch makes everything later make sense.
+- **Code first, questions after.** Claude implements each task. The owner learns top-down by reading the code and asking about its architecture, libraries and the ML concepts underneath. A task is finished when its checkpoint is met **and** the owner can explain how the code works and why it was built that way.
+- **Theory when the code needs it.** Each milestone's *Learn* list is what to study while reading that milestone's code. Python and math are studied separately, outside this plan.
 
 ---
 
@@ -92,12 +92,11 @@ pointsman/
 │   └── triage.duckdb
 ├── models/                      # Git-ignored artifacts (baseline, LoRA adapter, ONNX, calibration)
 ├── notebooks/
-│   ├── 00_logreg_from_scratch.ipynb
 │   ├── 01_eda.ipynb
 │   ├── 02_baseline_error_analysis.ipynb
 │   ├── 03_colab_lora_finetune.ipynb
 │   └── 04_split_backtest.ipynb
-├── src/
+├── src/pointsman/               # Python package (uv_build layout)
 │   ├── pipeline/                # schemas.py, ingest.py, clean.py, snapshot.py, change_log.py, split.py
 │   ├── events/                  # source.py (interface), poller.py, detector.py
 │   ├── live/                    # collect.py, predict.py, score.py
@@ -117,18 +116,11 @@ pointsman/
 
 ## 5. Milestones (dependency order)
 
-### Milestone 0: Foundations
+### Milestone 0: Environment ✅
 
-**Prerequisites:** none.
+- [x] `uv` project pinned to Python 3.12 (`.python-version`), with the base dependencies in `pyproject.toml` and exact versions in `uv.lock`.
 
-- [ ] **[You] Python gaps:** virtual environments with `uv`, `pathlib`, list/dict comprehensions, `dataclasses`, type hints, reading a traceback, writing a pytest test.
-- [ ] **[You] numpy & pandas:** arrays, shapes, broadcasting, vectorized operations; DataFrames, filtering, `groupby`, joins.
-- [ ] **[You] Math refresh:** vectors, dot product, matrix multiplication, partial derivatives, gradient, chain rule, exponent/log, probability, softmax.
-- [ ] **[You] Logistic regression from scratch** in numpy: sigmoid/softmax, cross-entropy loss, its gradient, a gradient-descent loop, and a train/validation split.
-
-**Learn:** 3Blue1Brown *Essence of Linear Algebra* (ch. 1–4, 9) and *Neural Networks* (ch. 1–2); StatQuest *Logistic Regression* and *Gradient Descent*.
-
-**Checkpoint:** your from-scratch model reaches accuracy close to `sklearn.linear_model.LogisticRegression` on a toy dataset, and you can explain each line of the gradient update.
+**Checkpoint:** `uv run python -c "import numpy, pandas, sklearn"` succeeds. Met on 2026-10-15.
 
 ---
 
@@ -136,16 +128,16 @@ pointsman/
 
 **Prerequisites:** M0.
 
-- [ ] **[Scaffold] `ingest.py`:** GraphQL fetch of In-scope and Out-of-scope Issues created on or after 2023-07-06, open and closed. Fields: title, body, created_at, author (and whether it is a bot), labels **with label IDs**, Team **Label Events** (who applied which label and when), `triaged-*` labels, and comments on `r: duplicate` Issues.
-- [ ] **[You] `schemas.py` + `clean.py`:** Pydantic validation; strip HTML comments and template boilerplate; split prose from fenced code blocks and stack traces; derive the target Team; mark each Issue as **Routed** or **Self-labeled** (from who applied the first Team label); parse Duplicate → Original links.
-- [ ] **[You] `snapshot.py`:** write each download to `data/snapshots/<date>/` with a manifest (snapshot date, Taxonomy Version, row counts per Team). Manual versioning; DVC is postponed.
-- [ ] **[You] `change_log.py`:** build the **Team Change Log** from label creation dates and the git history of `docs/triage/README.md`.
-- [ ] **[You] `split.py`:** load into DuckDB and produce the 70 / 15 / 15 temporal split.
-- [ ] **[You] Tests:** split boundary; no Issue in more than one split; Duplicate-comment parser; bot filtering.
+- [ ] **`ingest.py`:** GraphQL fetch of In-scope and Out-of-scope Issues created on or after 2023-07-06, open and closed. Fields: title, body, created_at, author (and whether it is a bot), labels **with label IDs**, Team **Label Events** (who applied which label and when), `triaged-*` labels, and comments on `r: duplicate` Issues.
+- [ ] **`schemas.py` + `clean.py`:** Pydantic validation; strip HTML comments and template boilerplate; split prose from fenced code blocks and stack traces; derive the target Team; mark each Issue as **Routed** or **Self-labeled** (from who applied the first Team label); parse Duplicate → Original links.
+- [ ] **`snapshot.py`:** write each download to `data/snapshots/<date>/` with a manifest (snapshot date, Taxonomy Version, row counts per Team). Manual versioning; DVC is postponed.
+- [ ] **`change_log.py`:** build the **Team Change Log** from label creation dates and the git history of `docs/triage/README.md`.
+- [ ] **`split.py`:** load into DuckDB and produce the 70 / 15 / 15 temporal split.
+- [ ] **Tests:** split boundary; no Issue in more than one split; Duplicate-comment parser; bot filtering.
 
 **Learn:** temporal leakage; label noise; class imbalance. Chip Huyen, *Designing Machine Learning Systems* (DMLS) ch. 3–4.
 
-**Checkpoint:** `python -m src.pipeline.split` passes `max(train.created_at) < min(val.created_at)` and `max(val.created_at) < min(test.created_at)`, and the manifest's row counts match DuckDB.
+**Checkpoint:** `uv run python -m pointsman.pipeline.split` passes `max(train.created_at) < min(val.created_at)` and `max(val.created_at) < min(test.created_at)`, and the manifest's row counts match DuckDB.
 
 ---
 
@@ -153,11 +145,11 @@ pointsman/
 
 **Prerequisites:** M1.
 
-- [ ] **[You] `events/source.py`:** a **Label Event source interface**. Implement a poller that queries every ~15 minutes and backfills by timestamp after any downtime. Document that production would plug a GitHub webhook (`label`, `issues.labeled`) into the same interface.
-- [ ] **[You] `events/detector.py`:** raise an alert on a new `team-*` label or a Triage Rulebook commit, and append it to the Team Change Log. A human approves any new Taxonomy Version.
-- [ ] **[You] `live/collect.py`:** store new Issues that have no Team label, with their text frozen at collection time.
-- [ ] **[Scaffold] Prefect flow** wrapping the poller and collector (introduce Prefect once the plain scripts work).
-- [ ] **[You] Measure** real weekly volume and time until labeling, then **write the live scoring rule** into this plan before any predictions are scored.
+- [ ] **`events/source.py`:** a **Label Event source interface**. Implement a poller that queries every ~15 minutes and backfills by timestamp after any downtime. Document that production would plug a GitHub webhook (`label`, `issues.labeled`) into the same interface.
+- [ ] **`events/detector.py`:** raise an alert on a new `team-*` label or a Triage Rulebook commit, and append it to the Team Change Log. A human approves any new Taxonomy Version.
+- [ ] **`live/collect.py`:** store new Issues that have no Team label, with their text frozen at collection time.
+- [ ] **Prefect flow** wrapping the poller and collector (introduce Prefect once the plain scripts work).
+- [ ] **Measure** real weekly volume and time until labeling, then **write the live scoring rule** into this plan before any predictions are scored.
 
 **Learn:** event-driven versus polling architectures; why prospective evaluation cannot leak.
 
@@ -169,7 +161,7 @@ pointsman/
 
 **Prerequisites:** M1.
 
-- [ ] **[You] `01_eda.ipynb`:** Team distribution; Routed versus Self-labeled share per Team; open/closed mix across splits; how often Team labels change (bounces between Teams); monthly Team volume with Team Split dates overlaid; Issue length distribution in tokens.
+- [ ] **`01_eda.ipynb`:** Team distribution; Routed versus Self-labeled share per Team; open/closed mix across splits; how often Team labels change (bounces between Teams); monthly Team volume with Team Split dates overlaid; Issue length distribution in tokens.
 
 **Checkpoint:** a written list of the 5 findings that most affect modeling choices.
 
@@ -179,11 +171,11 @@ pointsman/
 
 **Prerequisites:** M3.
 
-- [ ] **[You] Keyword-rule baseline** derived from the Triage Rulebook.
-- [ ] **[You] `features.py`:** `TfidfVectorizer` on prose and code, plus metadata (lengths, number of code blocks, has stack trace).
-- [ ] **[You] `train.py`:** class-weighted LogisticRegression and LightGBM, tracked in **MLflow** (introduce it here). Report Macro F1 on Routed validation Issues, per-Team F1, the Confirmed subset, the confusion matrix and single-Issue latency.
-- [ ] **[You] `02_baseline_error_analysis.ipynb`:** inspect the 30 most confident errors; classify each as model error, ambiguous per the Rulebook, or likely label noise.
-- [ ] **[You] Live:** the baseline starts predicting on collected live Issues.
+- [ ] **Keyword-rule baseline** derived from the Triage Rulebook.
+- [ ] **`features.py`:** `TfidfVectorizer` on prose and code, plus metadata (lengths, number of code blocks, has stack trace).
+- [ ] **`train.py`:** class-weighted LogisticRegression and LightGBM, tracked in **MLflow** (introduce it here). Report Macro F1 on Routed validation Issues, per-Team F1, the Confirmed subset, the confusion matrix and single-Issue latency.
+- [ ] **`02_baseline_error_analysis.ipynb`:** inspect the 30 most confident errors; classify each as model error, ambiguous per the Rulebook, or likely label noise.
+- [ ] **Live:** the baseline starts predicting on collected live Issues.
 
 **Learn:** TF-IDF and bag-of-words limits; linear classification and cross-entropy $\mathcal{L} = -\sum_i y_i \log \hat{y}_i$; gradient-boosted trees; precision/recall, Macro F1 versus accuracy. StatQuest *Gradient Boost*, *Confusion Matrix*, *F1*. DMLS ch. 6.
 
@@ -195,11 +187,11 @@ pointsman/
 
 **Prerequisites:** M4.
 
-- [ ] **[You] `dataset.py`:** input `"[TITLE] … [PROSE] … [CODE] …"`; tokenize with `answerdotai/ModernBERT-base`; dynamic padding.
-- [ ] **[You] `model.py`:** `AutoModelForSequenceClassification(num_labels=8)` plus PEFT `LoraConfig(task_type="SEQ_CLS", r=16, lora_alpha=32, lora_dropout=0.05, target_modules=["Wqkv", "Wo", "Wi"])`. Print the trainable-parameter share and explain it.
-- [ ] **[You] `train.py`** (Colab/Kaggle T4): AdamW, warmup plus cosine schedule, **`fp16=True`** (T4 does not support bf16), class-weighted cross-entropy, Macro F1 evaluation, checkpointing (free sessions disconnect).
-- [ ] **[You] Length experiment:** max length 512 / 1,024 / 2,048 tokens for F1 versus training cost.
-- [ ] **[You] Live:** the fine-tuned model also predicts on every live Issue.
+- [ ] **`dataset.py`:** input `"[TITLE] … [PROSE] … [CODE] …"`; tokenize with `answerdotai/ModernBERT-base`; dynamic padding.
+- [ ] **`model.py`:** `AutoModelForSequenceClassification(num_labels=8)` plus PEFT `LoraConfig(task_type="SEQ_CLS", r=16, lora_alpha=32, lora_dropout=0.05, target_modules=["Wqkv", "Wo", "Wi"])`. Print the trainable-parameter share and explain it.
+- [ ] **`train.py`** (Colab/Kaggle T4): AdamW, warmup plus cosine schedule, **`fp16=True`** (T4 does not support bf16), class-weighted cross-entropy, Macro F1 evaluation, checkpointing (free sessions disconnect).
+- [ ] **Length experiment:** max length 512 / 1,024 / 2,048 tokens for F1 versus training cost.
+- [ ] **Live:** the fine-tuned model also predicts on every live Issue.
 
 **Learn:** subword tokenization; embeddings; self-attention $\text{softmax}(QK^T/\sqrt{d_k})V$; LoRA $h = W_0x + \frac{\alpha}{r}BAx$. 3Blue1Brown *Attention in Transformers*; Hugging Face Course ch. 2–3; PEFT docs.
 
@@ -211,9 +203,9 @@ pointsman/
 
 **Prerequisites:** M5 (fine-tuned encoder), M1 (Duplicate pairs).
 
-- [ ] **[You] TF-IDF cosine** retrieval baseline.
-- [ ] **[You] Off-the-shelf sentence-embedding model** (for example from `sentence-transformers`), stored in DuckDB as `FLOAT[d]` arrays and searched with `array_cosine_similarity`.
-- [ ] **[You] (Stretch)** fine-tune the embedding model on Duplicate pairs with a contrastive loss.
+- [ ] **TF-IDF cosine** retrieval baseline.
+- [ ] **Off-the-shelf sentence-embedding model** (for example from `sentence-transformers`), stored in DuckDB as `FLOAT[d]` arrays and searched with `array_cosine_similarity`.
+- [ ] **(Stretch)** fine-tune the embedding model on Duplicate pairs with a contrastive loss.
 
 **Learn:** vector spaces, cosine similarity, why classification embeddings cluster by Team rather than by "same bug", contrastive learning, Recall@k.
 
@@ -225,10 +217,10 @@ pointsman/
 
 **Prerequisites:** M5, M6.
 
-- [ ] **[You] `calibrate.py`:** fit a temperature $T$ by **minimizing NLL** on validation logits, $P_i = \frac{e^{z_i/T}}{\sum_j e^{z_j/T}}$; report ECE and reliability diagrams before and after.
-- [ ] **[You] `cutoff.py`:** derive the Confidence Cutoff for the **90% Accuracy Goal**; plot Coverage versus accuracy (80 / 90 / 95% marked).
-- [ ] **[You] `prototypes.py`:** **Team Prototypes**; add the "far from every Team" signal to the Routing Decision.
-- [ ] **[You] Out-of-scope check:** the share of Out-of-scope Team Issues that end up in Human review (good) versus wrongly Auto-assigned (bad), with and without the prototype signal.
+- [ ] **`calibrate.py`:** fit a temperature $T$ by **minimizing NLL** on validation logits, $P_i = \frac{e^{z_i/T}}{\sum_j e^{z_j/T}}$; report ECE and reliability diagrams before and after.
+- [ ] **`cutoff.py`:** derive the Confidence Cutoff for the **90% Accuracy Goal**; plot Coverage versus accuracy (80 / 90 / 95% marked).
+- [ ] **`prototypes.py`:** **Team Prototypes**; add the "far from every Team" signal to the Routing Decision.
+- [ ] **Out-of-scope check:** the share of Out-of-scope Team Issues that end up in Human review (good) versus wrongly Auto-assigned (bad), with and without the prototype signal.
 
 **Learn:** why neural networks are overconfident (Guo et al., 2017, *On Calibration of Modern Neural Networks*); selective prediction; prototype-based classification (Snell et al., 2017, *Prototypical Networks*).
 
@@ -240,10 +232,10 @@ pointsman/
 
 **Prerequisites:** M7, M1 (Team Change Log).
 
-- [ ] **[You] `weak_labels.py`:** turn a new Team's Rulebook rule into code; apply it to the historical Issues of the Teams it took work from; filter matches by embedding similarity. Store the results as marked **Weak Labels** (training only, per the ADR 0001 amendment).
-- [ ] **[You] `04_split_backtest.ipynb`:** replay the 2024-08-14 accessibility split using only pre-split training data. Compare **(A)** waiting for N real labels, **(B)** description-only zero-shot, and **(C)** Rulebook plus old-Team history (Weak Labels), scored against real post-split labels. Measure detection lag, containment, the new-Team learning curve, and **Coverage Recovery**.
-- [ ] **[You] Pre/post training comparison:** two LightGBM models of equal size, trained before and after the split, evaluated on the same test window.
-- [ ] **[You]** set the retraining trigger N from the learning curve.
+- [ ] **`weak_labels.py`:** turn a new Team's Rulebook rule into code; apply it to the historical Issues of the Teams it took work from; filter matches by embedding similarity. Store the results as marked **Weak Labels** (training only, per the ADR 0001 amendment).
+- [ ] **`04_split_backtest.ipynb`:** replay the 2024-08-14 accessibility split using only pre-split training data. Compare **(A)** waiting for N real labels, **(B)** description-only zero-shot, and **(C)** Rulebook plus old-Team history (Weak Labels), scored against real post-split labels. Measure detection lag, containment, the new-Team learning curve, and **Coverage Recovery**.
+- [ ] **Pre/post training comparison:** two LightGBM models of equal size, trained before and after the split, evaluated on the same test window.
+- [ ] Set the retraining trigger N from the learning curve.
 
 **Learn:** concept drift and monitoring (DMLS ch. 8–9); weak supervision (Ratner et al., 2017, *Snorkel*); few-shot learning.
 
@@ -255,10 +247,10 @@ pointsman/
 
 **Prerequisites:** M7 (M8 optional for the first deploy).
 
-- [ ] **[You] `export_onnx.py`:** merge LoRA (`merge_and_unload()`), export to ONNX (if tracing fails, try `attn_implementation="eager"` and `reference_compile=False`), apply `onnxruntime.quantization.quantize_dynamic` INT8. Measure size and the F1 change on **validation**.
-- [ ] **[Scaffold] `app.py`:** `POST /triage` (clean → Team model → calibrated probabilities → Routing Decision → Duplicate candidates) and `POST /feedback`.
-- [ ] **[Scaffold] `Dockerfile`:** CPU-only image with `onnxruntime`, without PyTorch/CUDA.
-- [ ] **[You] Latency report** per the protocol in §3.6.
+- [ ] **`export_onnx.py`:** merge LoRA (`merge_and_unload()`), export to ONNX (if tracing fails, try `attn_implementation="eager"` and `reference_compile=False`), apply `onnxruntime.quantization.quantize_dynamic` INT8. Measure size and the F1 change on **validation**.
+- [ ] **`app.py`:** `POST /triage` (clean → Team model → calibrated probabilities → Routing Decision → Duplicate candidates) and `POST /feedback`.
+- [ ] **`Dockerfile`:** CPU-only image with `onnxruntime`, without PyTorch/CUDA.
+- [ ] **Latency report** per the protocol in §3.6.
 
 **Learn:** affine INT8 quantization (scale, zero-point); serving trade-offs (DMLS ch. 7).
 
@@ -270,10 +262,10 @@ pointsman/
 
 **Prerequisites:** all above; the live scoring rule from M2 is satisfied.
 
-- [ ] **[You] Replay Experiment** (`replay.py`): low-confidence versus random review.
-- [ ] **[You] Live scoring** per the pre-written rule: baseline versus fine-tuned on the same frozen Issues.
-- [ ] **[You] Open the test set once**; fill in the scorecard.
-- [ ] **[You] README:** scorecard, Coverage curve, split backtest, limitations.
+- [ ] **Replay Experiment** (`replay.py`): low-confidence versus random review.
+- [ ] **Live scoring** per the pre-written rule: baseline versus fine-tuned on the same frozen Issues.
+- [ ] **Open the test set once**; fill in the scorecard.
+- [ ] **README:** scorecard, Coverage curve, split backtest, limitations.
 
 **Learn:** active learning and uncertainty sampling; communicating results honestly.
 

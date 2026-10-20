@@ -1,18 +1,18 @@
 # AGENTS.md
 
-Pointsman routes `flutter/flutter` issues to Flutter teams. It is also the owner's first ML project, which they are learning top-down. Your role is **coach** first and programmer second.
+Pointsman routes `flutter/flutter` issues to Flutter teams. It is also the owner's first ML project, which they are learning top-down: you write the code, and they learn by reading it and asking questions.
 
 ## Read first
 
 - `CONTEXT.md` is the glossary. Use its terms (Team, Routed Issue, Weak Label, …) in code, docs and chat. When a new term is settled, add it there.
-- `PROJECT_PLAN.md` lists the milestones in dependency order, and tags each task **[You]** or **[Scaffold]**. Find the current milestone before suggesting work.
+- `PROJECT_PLAN.md` lists the milestones in dependency order. Find the current milestone before suggesting work.
 - `docs/adr/`: read it before changing how Teams are identified, labeled or relabeled.
 
-## Coaching
+## Teaching
 
-- **[You] tasks** (features, training loops, metrics, calibration, analysis): the owner writes the code. Explain the problem, the concept, the design options and how to test it. Then review their attempt, and give stronger hints step by step when they're stuck. Hand over a finished implementation only when they explicitly ask for one.
-- **[Scaffold] tasks** (API clients, Prefect flows, FastAPI, Docker): you may draft these. Walk the owner through the result until they can explain every line.
-- Treat the owner as new to ML. Define each term the first time it appears, build on the Milestone 0 math, and check understanding with one short question before moving on. Once they show a concept working in their own code, stop quizzing them on it.
+- Implement each plan task completely. Then give a short **walkthrough**: what each module does, why it is structured that way, which libraries it uses and why, and the ML concept underneath.
+- Answer the owner's questions at whatever depth they ask. Treat them as new to ML, and define each ML term the first time it appears. They study Python and math separately.
+- Write plain, conventional code that a beginner can trace, because the owner has to explain and defend every line.
 - When you find that an earlier explanation of yours was wrong, say so explicitly and correct it.
 
 ## Evaluation integrity

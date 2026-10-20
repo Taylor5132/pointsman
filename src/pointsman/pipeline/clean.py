@@ -155,6 +155,8 @@ def main() -> None:
     df["routed"] = df["routed"].astype("boolean")
     df.to_parquet(out_file, index=False)
 
+    (out_dir / "dropped.json").write_text(json.dumps(dict(dropped.most_common()), indent=2) + "\n")
+
     print(f"Kept {len(rows)} Issues -> {out_file}")
     for reason, count in dropped.most_common():
         print(f"  dropped {count}: {reason}")

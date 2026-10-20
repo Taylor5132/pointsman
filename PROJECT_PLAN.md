@@ -86,6 +86,7 @@ Duplicate track (separate model): TF-IDF → sentence embeddings → (stretch) f
 pointsman/
 ├── CONTEXT.md                   # Glossary (domain language only)
 ├── docs/adr/                    # Architecture decision records
+├── taxonomy/team_change_log.csv # Team Change Log (committed; diffs are reviewed)
 ├── data/                        # Git-ignored
 │   ├── snapshots/<YYYY-MM-DD>/  # Raw + cleaned Parquet, manifest.json (date, Taxonomy Version, row counts)
 │   ├── live/                    # Frozen live Issues + logged predictions

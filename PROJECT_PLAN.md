@@ -129,11 +129,21 @@ pointsman/
 
 **Prerequisites:** M0.
 
-- [ ] **`ingest.py`:** GraphQL fetch of In-scope and Out-of-scope Issues created on or after 2023-07-06, open and closed. Fields: title, body, created_at, author (and whether it is a bot), labels **with label IDs**, Team **Label Events** (who applied which label and when), `triaged-*` labels, and comments on `r: duplicate` Issues.
-- [ ] **`schemas.py` + `clean.py`:** Pydantic validation; strip HTML comments and template boilerplate; split prose from fenced code blocks and stack traces; derive the target Team; mark each Issue as **Routed** or **Self-labeled** (from who applied the first Team label); parse Duplicate → Original links.
-- [ ] **`snapshot.py`:** write each download to `data/snapshots/<date>/` with a manifest (snapshot date, Taxonomy Version, row counts per Team). Manual versioning; DVC is postponed.
-- [ ] **`change_log.py`:** build the **Team Change Log** from label creation dates and the git history of `docs/triage/README.md`.
-- [ ] **`split.py`:** load into DuckDB and produce the 70 / 15 / 15 temporal split.
+> **Status (2026-10-20): in progress.** Pipeline runs end to end on a 200-Issue sample (`2026-10-20-sample200`, frozen). **Next:** tests → full download → clean → split → freeze → checkpoint.
+>
+> ```bash
+> uv run python -m pointsman.pipeline.ingest            # add --limit N for a sample
+> uv run python -m pointsman.pipeline.clean    --snapshot <name>
+> uv run python -m pointsman.pipeline.split    --snapshot <name>
+> uv run python -m pointsman.pipeline.snapshot freeze --snapshot <name>
+> uv run python -m pointsman.pipeline.change_log         # refresh taxonomy/team_change_log.csv
+> ```
+
+- [x] **`ingest.py`:** GraphQL fetch of In-scope and Out-of-scope Issues created on or after 2023-07-06, open and closed. Fields: title, body, created_at, author (and whether it is a bot), labels **with label IDs**, Team **Label Events** (who applied which label and when), `triaged-*` labels, and comments on `r: duplicate` Issues.
+- [x] **`schemas.py` + `clean.py`:** Pydantic validation; strip HTML comments and template boilerplate; split prose from fenced code blocks and stack traces; derive the target Team; mark each Issue as **Routed** or **Self-labeled** (from who applied the first Team label); parse Duplicate → Original links.
+- [x] **`snapshot.py`:** write each download to `data/snapshots/<date>/` with a manifest (snapshot date, Taxonomy Version, row counts per Team). Manual versioning; DVC is postponed.
+- [x] **`change_log.py`:** build the **Team Change Log** from label creation dates and the git history of `docs/triage/README.md`.
+- [x] **`split.py`:** load into DuckDB and produce the 70 / 15 / 15 temporal split.
 - [ ] **Tests:** split boundary; no Issue in more than one split; Duplicate-comment parser; bot filtering.
 
 **Learn:** temporal leakage; label noise; class imbalance. Chip Huyen, *Designing Machine Learning Systems* (DMLS) ch. 3–4.

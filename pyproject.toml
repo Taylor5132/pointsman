@@ -17,6 +17,7 @@ dependencies = [
     "pyarrow>=26.0.0",
     "pydantic>=2.14.1",
     "pytest>=9.1.1",
+    "pytz>=2026.5",
     "scikit-learn>=1.9.1",
 ]
 

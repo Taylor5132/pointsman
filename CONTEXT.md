@@ -49,7 +49,7 @@ The share of Issues that receive Auto-assign under a given Confidence Cutoff.
 An Issue whose first Team label was applied by someone other than its author. Headline results are reported on Routed Issues only, because routing them is the real task.
 
 **Self-labeled Issue**:
-An Issue whose author applied its Team label when filing it. Used for training, never for headline results.
+An Issue whose author applied its first Team label themselves. Used for training, never for headline results.
 _Avoid_: Internal issue
 
 **Confirmed Team**:

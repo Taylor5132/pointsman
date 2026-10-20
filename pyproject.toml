@@ -13,6 +13,8 @@ dependencies = [
     "matplotlib>=3.11.2",
     "numpy>=2.5.4",
     "pandas>=3.0.6",
+    "pyarrow>=26.0.0",
+    "pydantic>=2.14.1",
     "pytest>=9.1.1",
     "scikit-learn>=1.9.1",
 ]

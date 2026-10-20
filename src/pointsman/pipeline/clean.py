@@ -133,6 +133,8 @@ def main() -> None:
     args = parser.parse_args()
 
     snapshot_dir = args.root / args.snapshot
+    if (snapshot_dir / "manifest.json").exists():
+        raise SystemExit(f"{snapshot_dir} is frozen (it has a manifest). Snapshots never change.")
     rows = []
     dropped = Counter()
 

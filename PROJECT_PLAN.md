@@ -26,7 +26,7 @@ An open-source ML system that predicts which Flutter **Team** should own a new G
 | Prediction target | One **In-scope Team** per Issue: engine, tool, design, framework, web, android, ios, ecosystem (the Rulebook requires "one and only one" `team-*` label) |
 | Excluded | `team-infra` (internal CI reports). **Out-of-scope Teams** (accessibility, text-input, linux, macos, windows, devexp, fluttergpu) are never trained on; their Issues test whether the system sends unfamiliar work to Human review |
 | Issues | Open **and** closed, written by people (not bots), created on or after **2023-07-06**, the date the In-scope Team labels were created |
-| Expected size | ~20k labeled Issues (measured 2026-10-14: 12,289 closed + 10,984 open across the 8 Teams, all dates) |
+| Expected size | ~14.6k labeled Issues created since 2023-07-06 (counted 2026-10-20: 13,170 In-scope + 1,451 Out-of-scope), so about 9.2k In-scope training Issues |
 | Team identity | The permanent label ID, interpreted through a dated **Taxonomy Version**. See ADR 0001 |
 | Dropped features | `author_association` (it probably shows the author's role today, not when they filed; leakage risk). The body text may have been edited after filing; this is a documented limitation |
 

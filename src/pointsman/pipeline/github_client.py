@@ -3,6 +3,7 @@
 import os
 import subprocess
 import time
+from datetime import datetime, timezone
 
 import httpx
 
@@ -63,7 +64,7 @@ class GitHubClient:
         """Every query asks for `rateLimit`. If the hourly budget is nearly spent, sleep until it resets."""
         limit = data.get("rateLimit")
         if limit and limit["remaining"] < 50:
-            reset = time.mktime(time.strptime(limit["resetAt"], "%Y-%m-%dT%H:%M:%SZ")) - time.timezone
-            seconds = max(0, reset - time.time()) + 5
+            reset_at = datetime.fromisoformat(limit["resetAt"])
+            seconds = max(0, (reset_at - datetime.now(timezone.utc)).total_seconds()) + 5
             print(f"  Rate limit almost used up, sleeping {seconds:.0f}s")
             time.sleep(seconds)

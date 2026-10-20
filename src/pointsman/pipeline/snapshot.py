@@ -21,7 +21,16 @@ from pathlib import Path
 import pandas as pd
 
 # The files a frozen snapshot contains, relative to its folder.
-DATA_FILES = ["raw/issues.jsonl", "raw/ingest_info.json", "clean/issues.parquet", "clean/dropped.json"]
+DATA_FILES = [
+    "raw/issues.jsonl",
+    "raw/ingest_info.json",
+    "clean/issues.parquet",
+    "clean/dropped.json",
+    "split/train.parquet",
+    "split/val.parquet",
+    "split/test.parquet",
+    "split/boundaries.json",
+]
 
 
 def sha256_of(path: Path) -> str:
@@ -65,7 +74,7 @@ def freeze(snapshot_dir: Path) -> None:
         raise SystemExit(f"{snapshot_dir} is already frozen.")
     missing = [name for name in DATA_FILES if not (snapshot_dir / name).exists()]
     if missing:
-        raise SystemExit(f"Cannot freeze: missing {missing}. Run ingest and clean first.")
+        raise SystemExit(f"Cannot freeze: missing {missing}. Run ingest, clean and split first.")
 
     ingest_info = json.loads((snapshot_dir / "raw/ingest_info.json").read_text())
     dropped = json.loads((snapshot_dir / "clean/dropped.json").read_text())
@@ -79,6 +88,7 @@ def freeze(snapshot_dir: Path) -> None:
         "code": code_version(),
         "ingest": {key: value for key, value in ingest_info.items() if key != "taxonomy_version"},
         "clean": {"kept": len(df), "dropped": dropped},
+        "split": json.loads((snapshot_dir / "split/boundaries.json").read_text()),
         "contents": summarize(df),
         "files": {name: {"sha256": sha256_of(snapshot_dir / name)} for name in DATA_FILES},
         "taxonomy": ingest_info["taxonomy_version"],

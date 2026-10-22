@@ -9,6 +9,13 @@ import httpx
 
 GRAPHQL_URL = "https://api.github.com/graphql"
 
+# GitHub answers with this (inside an HTTP 200) when a query is too heavy to finish in time.
+TIMEOUT_MESSAGE = "Something went wrong while executing your query"
+
+
+class QueryTimeout(RuntimeError):
+    """GitHub kept giving up on the query because it was too heavy. Asking for less may work."""
+
 
 def get_token() -> str:
     """Use $GITHUB_TOKEN if set, otherwise borrow the token the `gh` CLI is logged in with."""
@@ -20,20 +27,26 @@ def get_token() -> str:
 
 
 class GitHubClient:
-    def __init__(self, token: str, max_retries: int = 5):
+    def __init__(self, token: str, max_retries: int = 5, base_wait: float = 2.0, transport=None):
+        # `transport` lets tests plug in a fake GitHub; real use leaves it as None.
         self.http = httpx.Client(
             headers={"Authorization": f"Bearer {token}"},
             timeout=60.0,
+            transport=transport,
         )
         self.max_retries = max_retries
+        self.base_wait = base_wait
 
     def query(self, query: str, variables: dict) -> dict:
         """Run one GraphQL query and return its `data` part.
 
-        GitHub sometimes answers big queries with a 502 or a timeout. Those are
-        temporary, so we wait and try again, doubling the wait each time
-        (2s, 4s, 8s, ...). Real errors, such as a typo in the query, fail at once.
+        GitHub sometimes answers big queries with a 502, a dropped connection, or a
+        "too heavy" message. Those are temporary, so we wait and try again, doubling
+        the wait each time (2s, 4s, 8s, ...). Real errors, such as a typo in the
+        query, fail at once. If every attempt was "too heavy", we raise QueryTimeout
+        so the caller can ask for less.
         """
+        timed_out = False
         for attempt in range(self.max_retries):
             try:
                 response = self.http.post(GRAPHQL_URL, json={"query": query, "variables": variables})
@@ -48,16 +61,22 @@ class GitHubClient:
 
             body = response.json()
             if "errors" in body:
+                if all(TIMEOUT_MESSAGE in error.get("message", "") for error in body["errors"]):
+                    timed_out = True
+                    self._wait_before_retry(attempt)
+                    continue
                 raise RuntimeError(f"GraphQL error: {body['errors']}")
 
             self._pause_if_rate_limited(body["data"])
             return body["data"]
 
+        if timed_out:
+            raise QueryTimeout(f"GitHub found the query too heavy {self.max_retries} times in a row")
         raise RuntimeError(f"GitHub did not answer after {self.max_retries} attempts")
 
     def _wait_before_retry(self, attempt: int) -> None:
-        seconds = 2 ** (attempt + 1)
-        print(f"  GitHub hiccup, retrying in {seconds}s")
+        seconds = self.base_wait * 2**attempt
+        print(f"  GitHub hiccup, retrying in {seconds:.0f}s")
         time.sleep(seconds)
 
     def _pause_if_rate_limited(self, data: dict) -> None:

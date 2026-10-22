@@ -15,7 +15,7 @@ import json
 from datetime import date, datetime, timezone
 from pathlib import Path
 
-from pointsman.pipeline.github_client import GitHubClient, get_token
+from pointsman.pipeline.github_client import GitHubClient, QueryTimeout, get_token
 from pointsman.teams import DATA_START, IN_SCOPE_TEAMS, OUT_OF_SCOPE_TEAMS
 
 # One page of Issues, newest first, filtered to Issues carrying any of our Team labels.
@@ -95,7 +95,16 @@ def fetch_issues(client: GitHubClient, limit: int | None, page_size: int = 50):
     count = 0
 
     while True:
-        data = client.query(ISSUES_QUERY, {"labels": labels, "first": page_size, "after": cursor})
+        try:
+            data = client.query(ISSUES_QUERY, {"labels": labels, "first": page_size, "after": cursor})
+        except QueryTimeout:
+            # Some pages hold Issues with huge histories. Ask for fewer Issues per page
+            # from the same bookmark; the cursor marks a position, so nothing is skipped.
+            if page_size <= 5:
+                raise
+            page_size = max(5, page_size // 2)
+            print(f"  Page too heavy for GitHub, continuing with pages of {page_size}")
+            continue
         page = data["repository"]["issues"]
 
         for issue in page["nodes"]:

@@ -139,9 +139,18 @@ def clean_snapshot(snapshot_dir: Path) -> tuple[pd.DataFrame, Counter]:
     rows = []
     dropped = Counter()
 
+    second_timelines = {}
+    label_events_file = snapshot_dir / "raw" / "label_events.jsonl"
+    if label_events_file.exists():
+        with label_events_file.open() as f:
+            for line in f:
+                record = json.loads(line)
+                second_timelines[record["number"]] = record["timelineItems"]
+
     with (snapshot_dir / "raw" / "issues.jsonl").open() as f:
         for line in f:
-            issue = RawIssue.from_graphql(json.loads(line))
+            raw = json.loads(line)
+            issue = RawIssue.from_graphql(raw, second_timelines.get(raw["number"]))
             row, reason = clean_issue(issue)
             if row is None:
                 dropped[reason] += 1

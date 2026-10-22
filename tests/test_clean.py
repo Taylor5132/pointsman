@@ -115,3 +115,19 @@ def test_kept_issue_carries_team_facts(make_issue):
 
     row, _ = clean_issue(raw(make_issue, labels=["team-windows"]))
     assert row.in_scope is False and row.confirmed is False
+
+
+# --- Second fetch of label histories ------------------------------------------
+
+def test_more_complete_label_history_wins(make_issue):
+    bulk = make_issue(author="alice", events=[("LabeledEvent", "P2", "alice")])  # truncated: Team event missing
+    second = make_issue(author="alice", events=[("LabeledEvent", "P2", "alice"), ("LabeledEvent", "team-web", "triager")])
+    issue = RawIssue.from_graphql(bulk, second["timelineItems"])
+    assert find_routed(issue) is True
+
+
+def test_shorter_second_history_is_ignored(make_issue):
+    bulk = make_issue(author="alice", events=[("LabeledEvent", "team-web", "alice"), ("LabeledEvent", "P2", "bob")])
+    second = make_issue(author="alice", events=[("LabeledEvent", "P2", "bob")])
+    issue = RawIssue.from_graphql(bulk, second["timelineItems"])
+    assert find_routed(issue) is False

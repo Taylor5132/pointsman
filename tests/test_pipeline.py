@@ -25,6 +25,7 @@ def snapshot_dir(tmp_path, make_issue):
     directory = tmp_path / "2024-02-01"
     (directory / "raw").mkdir(parents=True)
     (directory / "raw/issues.jsonl").write_text("".join(json.dumps(issue) + "\n" for issue in issues))
+    (directory / "raw/label_events.jsonl").write_text("")
     (directory / "raw/ingest_info.json").write_text(json.dumps({"complete": True, "taxonomy_version": {"id": "rulebook-test"}}))
     return directory
 

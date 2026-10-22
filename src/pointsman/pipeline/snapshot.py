@@ -23,6 +23,7 @@ import pandas as pd
 # The files a frozen snapshot contains, relative to its folder.
 DATA_FILES = [
     "raw/issues.jsonl",
+    "raw/label_events.jsonl",
     "raw/ingest_info.json",
     "clean/issues.parquet",
     "clean/dropped.json",

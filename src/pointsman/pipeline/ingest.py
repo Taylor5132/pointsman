@@ -5,7 +5,8 @@ Usage:
 
 Writes one JSON object per line (JSONL) to data/snapshots/<today>/raw/issues.jsonl
 (or <today>-sample<N>/ when --limit is used),
-plus raw/ingest_info.json recording how and when the download was made and which
+plus raw/label_events.jsonl (a second, independent fetch of every Issue's label
+history) and raw/ingest_info.json recording how and when the download was made and which
 Taxonomy Version was in force. Nothing is cleaned here; raw data is kept exactly as
 GitHub sent it, so cleaning can be re-run later without downloading again.
 """
@@ -122,14 +123,88 @@ def fetch_issues(client: GitHubClient, limit: int | None, page_size: int = 50):
         print(f"  {count} Issues so far (rate limit left: {data['rateLimit']['remaining']})")
 
 
+# GitHub sometimes returns an Issue's label history incomplete, at random, especially
+# inside the big page query. So after the bulk download we fetch every Issue's label
+# history a second time on its own (25 Issues per request, using aliases), and clean.py
+# keeps whichever copy is more complete.
+LABEL_EVENTS_FIELDS = """
+timelineItems(itemTypes: [LABELED_EVENT, UNLABELED_EVENT], first: 100) {
+  totalCount
+  nodes {
+    __typename
+    ... on LabeledEvent   { createdAt actor { login __typename } label { id name } }
+    ... on UnlabeledEvent { createdAt actor { login __typename } label { id name } }
+  }
+}
+"""
+
+
+def has_team_event(timeline: dict) -> bool:
+    return any(
+        node["__typename"] == "LabeledEvent" and node["label"]["name"].startswith("team-")
+        for node in timeline["nodes"]
+    )
+
+
+def fetch_label_events(client: GitHubClient, numbers: list[int], batch_size: int = 25) -> dict[int, dict]:
+    """Fetch the label history of each Issue number with single-Issue queries."""
+    result = {}
+    for start in range(0, len(numbers), batch_size):
+        batch = numbers[start:start + batch_size]
+        # Aliases ("i123: issue(number: 123)") let one request ask for many single Issues.
+        parts = " ".join(f"i{n}: issue(number: {n}) {{ {LABEL_EVENTS_FIELDS} }}" for n in batch)
+        query = f'query {{ rateLimit {{ cost remaining resetAt }} repository(owner: "flutter", name: "flutter") {{ {parts} }} }}'
+        data = client.query(query, {})["repository"]
+        for n in batch:
+            result[n] = data[f"i{n}"]["timelineItems"]
+        if start % 2500 == 0:
+            print(f"  label histories: {start + len(batch)}/{len(numbers)}")
+    return result
+
+
+def refetch_label_events(client: GitHubClient, issues_file: Path, out_file: Path, rounds: int = 3) -> int:
+    """Second fetch of every Issue's label history; extra rounds for any still missing a Team event.
+
+    Returns how many Issues still have a Team label but no Team label event afterwards.
+    """
+    bulk = {}
+    with issues_file.open() as f:
+        for line in f:
+            issue = json.loads(line)
+            has_label = any(l["name"].startswith("team-") for l in issue["labels"]["nodes"])
+            bulk[issue["number"]] = (has_label, issue["timelineItems"])
+
+    best = fetch_label_events(client, list(bulk))
+    for round_number in range(2, rounds + 1):
+        missing = [n for n, (has_label, timeline) in bulk.items()
+                   if has_label and not has_team_event(timeline) and not has_team_event(best[n])]
+        if not missing:
+            break
+        print(f"  round {round_number}: re-asking for {len(missing)} label histories")
+        again = fetch_label_events(client, missing)
+        for n, timeline in again.items():
+            if timeline["totalCount"] > best[n]["totalCount"] or has_team_event(timeline):
+                best[n] = timeline
+
+    with out_file.open("w") as f:
+        for n, timeline in best.items():
+            f.write(json.dumps({"number": n, "timelineItems": timeline}) + "\n")
+
+    return sum(1 for n, (has_label, timeline) in bulk.items()
+               if has_label and not has_team_event(timeline) and not has_team_event(best[n]))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--limit", type=int, default=None, help="stop after N Issues (default: all)")
     parser.add_argument("--out", type=Path, default=Path("data/snapshots"))
+    parser.add_argument("--name", help="snapshot folder name (default: today's date)")
     args = parser.parse_args()
 
     # A sample gets its own folder name, so it never takes the place of a full download.
     name = date.today().isoformat() if args.limit is None else f"{date.today().isoformat()}-sample{args.limit}"
+    if args.name:
+        name = args.name
     snapshot_dir = args.out / name
     if (snapshot_dir / "manifest.json").exists():
         raise SystemExit(f"{snapshot_dir} is frozen (it has a manifest). Snapshots never change.")
@@ -148,6 +223,9 @@ def main() -> None:
             f.write(json.dumps(issue) + "\n")
             count += 1
 
+    print("Second fetch of label histories...")
+    still_missing = refetch_label_events(client, out_file, raw_dir / "label_events.jsonl")
+
     info = {
         "repo": "flutter/flutter",
         "teams_queried": IN_SCOPE_TEAMS + OUT_OF_SCOPE_TEAMS,
@@ -155,6 +233,7 @@ def main() -> None:
         "limit": args.limit,
         "complete": args.limit is None,  # False means this is only a sample
         "issues": count,
+        "team_label_without_event": still_missing,  # Routed/Self-labeled unknown for these
         "started_at": started_at.isoformat(),
         "finished_at": datetime.now(timezone.utc).isoformat(),
         "taxonomy_version": taxonomy,

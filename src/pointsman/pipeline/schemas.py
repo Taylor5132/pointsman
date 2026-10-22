@@ -39,6 +39,17 @@ class Comment(BaseModel):
     author: CommentAuthor | None
 
 
+def _has_team_event(timeline: dict) -> bool:
+    return any(n["__typename"] == "LabeledEvent" and n["label"]["name"].startswith("team-") for n in timeline["nodes"])
+
+
+def _more_complete(candidate: dict, current: dict) -> bool:
+    """More events wins; on a tie, the copy that contains a Team label event wins."""
+    if candidate["totalCount"] != current["totalCount"]:
+        return candidate["totalCount"] > current["totalCount"]
+    return _has_team_event(candidate) and not _has_team_event(current)
+
+
 class RawIssue(BaseModel):
     number: int
     title: str
@@ -54,12 +65,19 @@ class RawIssue(BaseModel):
     comments: list[Comment]  # the last 5
 
     @classmethod
-    def from_graphql(cls, raw: dict) -> "RawIssue":
-        """GraphQL wraps every list as {"nodes": [...]}. Unwrap those, then validate."""
+    def from_graphql(cls, raw: dict, second_timeline: dict | None = None) -> "RawIssue":
+        """GraphQL wraps every list as {"nodes": [...]}. Unwrap those, then validate.
+
+        `second_timeline` is the separately fetched label history (raw/label_events.jsonl).
+        GitHub sometimes returns a history incomplete, so we keep the longer of the two.
+        """
+        timeline = raw["timelineItems"]
+        if second_timeline is not None and _more_complete(second_timeline, timeline):
+            timeline = second_timeline
         flat = dict(raw)
         flat["labels"] = raw["labels"]["nodes"]
-        flat["label_events"] = raw["timelineItems"]["nodes"]
-        flat["label_events_total"] = raw["timelineItems"]["totalCount"]
+        flat["label_events"] = timeline["nodes"]
+        flat["label_events_total"] = timeline["totalCount"]
         flat["comments"] = raw["comments"]["nodes"]
         return cls.model_validate(flat)
 

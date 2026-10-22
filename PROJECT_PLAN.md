@@ -129,7 +129,7 @@ pointsman/
 
 **Prerequisites:** M0.
 
-> **Status (2026-10-20): in progress.** Pipeline runs end to end on a 200-Issue sample (`2026-10-20-sample200`, frozen). **Next:** tests → full download → clean → split → freeze → checkpoint.
+> **Status (2026-10-22): in progress.** Pipeline runs end to end on a 200-Issue sample (`2026-10-20-sample200`, frozen); 18 tests pass (`uv run pytest`). **Next:** full download → clean → split → freeze → checkpoint.
 >
 > ```bash
 > uv run python -m pointsman.pipeline.ingest            # add --limit N for a sample
@@ -144,7 +144,7 @@ pointsman/
 - [x] **`snapshot.py`:** write each download to `data/snapshots/<date>/` with a manifest (snapshot date, Taxonomy Version, row counts per Team). Manual versioning; DVC is postponed.
 - [x] **`change_log.py`:** build the **Team Change Log** from label creation dates and the git history of `docs/triage/README.md`.
 - [x] **`split.py`:** load into DuckDB and produce the 70 / 15 / 15 temporal split.
-- [ ] **Tests:** split boundary; no Issue in more than one split; Duplicate-comment parser; bot filtering.
+- [x] **Tests:** split boundary; no Issue in more than one split; Duplicate-comment parser; bot filtering.
 
 **Learn:** temporal leakage; label noise; class imbalance. Chip Huyen, *Designing Machine Learning Systems* (DMLS) ch. 3–4.
 

@@ -35,7 +35,9 @@ NATIVE_CRASH = re.compile(r"Thread \d+ Crashed|^\s+at [\w$.]+\(.*\)$|SIGSEGV|SIG
 # Triagers word it many ways: "Closing this as a duplicate of #192976",
 # "Duping to https://github.com/flutter/flutter/issues/128713", "dupe of #123".
 # So: any word starting with "dup", then the first Issue reference on the same line.
-DUPLICATE_OF = re.compile(r"\bdup\w*\b[^\n]*?(?:github\.com/flutter/flutter/issues/|#)(\d+)", re.IGNORECASE)
+# The repo is captured too, because an Original in another repo (e.g. flutter/packages)
+# is not in our data and must not be mistaken for a flutter/flutter Issue.
+DUPLICATE_OF = re.compile(r"\bdup\w*\b[^\n]*?(?:github\.com/([\w.-]+/[\w.-]+)/issues/|#)(\d+)", re.IGNORECASE)
 
 
 def strip_markup(body: str) -> str:
@@ -66,8 +68,12 @@ def find_duplicate_of(issue: RawIssue) -> int | None:
         return None
     for comment in reversed(issue.comments):  # the closing comment is usually the last one
         match = DUPLICATE_OF.search(comment.body)
-        if match:
-            return int(match.group(1))
+        if match is None:
+            continue
+        repo, number = match.group(1), match.group(2)
+        if repo is not None and repo.lower() != "flutter/flutter":
+            return None  # the Original lives in another repo
+        return int(number)
     return None
 
 
@@ -126,13 +132,8 @@ def clean_issue(issue: RawIssue) -> tuple[CleanIssue | None, str | None]:
     return row, None
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--snapshot", required=True, help="snapshot date, e.g. 2026-10-20")
-    parser.add_argument("--root", type=Path, default=Path("data/snapshots"))
-    args = parser.parse_args()
-
-    snapshot_dir = args.root / args.snapshot
+def clean_snapshot(snapshot_dir: Path) -> tuple[pd.DataFrame, Counter]:
+    """Clean every raw Issue in a snapshot and write clean/issues.parquet and clean/dropped.json."""
     if (snapshot_dir / "manifest.json").exists():
         raise SystemExit(f"{snapshot_dir} is frozen (it has a manifest). Snapshots never change.")
     rows = []
@@ -149,17 +150,24 @@ def main() -> None:
 
     out_dir = snapshot_dir / "clean"
     out_dir.mkdir(exist_ok=True)
-    out_file = out_dir / "issues.parquet"
-    df = pd.DataFrame(rows)
+    df = pd.DataFrame(rows, columns=list(CleanIssue.model_fields))
     # Columns that can be empty get pandas' "nullable" types, so 128713 stays a whole
     # number and True/False/unknown stays a boolean, instead of turning into floats/objects.
     df["duplicate_of"] = df["duplicate_of"].astype("Int64")
     df["routed"] = df["routed"].astype("boolean")
-    df.to_parquet(out_file, index=False)
-
+    df.to_parquet(out_dir / "issues.parquet", index=False)
     (out_dir / "dropped.json").write_text(json.dumps(dict(dropped.most_common()), indent=2) + "\n")
+    return df, dropped
 
-    print(f"Kept {len(rows)} Issues -> {out_file}")
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--snapshot", required=True, help="snapshot date, e.g. 2026-10-20")
+    parser.add_argument("--root", type=Path, default=Path("data/snapshots"))
+    args = parser.parse_args()
+
+    df, dropped = clean_snapshot(args.root / args.snapshot)
+    print(f"Kept {len(df)} Issues -> {args.root / args.snapshot / 'clean/issues.parquet'}")
     for reason, count in dropped.most_common():
         print(f"  dropped {count}: {reason}")
 

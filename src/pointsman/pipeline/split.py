@@ -57,13 +57,8 @@ def check_no_leakage(con: duckdb.DuckDBPyConnection) -> None:
     assert sum(n for _, _, n in span.values()) == total, "an Issue was lost or duplicated"
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--snapshot", required=True, help="snapshot date, e.g. 2026-10-20")
-    parser.add_argument("--root", type=Path, default=Path("data/snapshots"))
-    args = parser.parse_args()
-
-    snapshot_dir = args.root / args.snapshot
+def split_snapshot(snapshot_dir: Path) -> dict:
+    """Split a snapshot's clean Issues and write split/*.parquet and split/boundaries.json."""
     if (snapshot_dir / "manifest.json").exists():
         raise SystemExit(f"{snapshot_dir} is frozen (it has a manifest). Snapshots never change.")
 
@@ -103,9 +98,18 @@ def main() -> None:
         "counts": counts,
     }
     (out_dir / "boundaries.json").write_text(json.dumps(boundaries, indent=2) + "\n")
+    return boundaries
 
-    print(f"train {counts['train']} | val {counts['val']} (from {val_start:%Y-%m-%d}) "
-          f"| test {counts['test']} (from {test_start:%Y-%m-%d})")
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--snapshot", required=True, help="snapshot date, e.g. 2026-10-20")
+    parser.add_argument("--root", type=Path, default=Path("data/snapshots"))
+    args = parser.parse_args()
+
+    b = split_snapshot(args.root / args.snapshot)
+    c = b["counts"]
+    print(f"train {c['train']} | val {c['val']} (from {b['val_start'][:10]}) | test {c['test']} (from {b['test_start'][:10]})")
 
 
 if __name__ == "__main__":

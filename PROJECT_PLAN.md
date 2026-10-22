@@ -129,7 +129,7 @@ pointsman/
 
 **Prerequisites:** M0.
 
-> **Status (2026-10-22): in progress.** Pipeline runs end to end on a 200-Issue sample (`2026-10-20-sample200`, frozen); 18 tests pass (`uv run pytest`). **Next:** full download → clean → split → freeze → checkpoint.
+> **Status (2026-10-22): ✅ done.** Use snapshot **`2026-10-22-v2`** (frozen; 14,660 Issues: train 10,261 / val 2,199 / test 2,200; Routed known for all but 24). Snapshot `2026-10-22` is **superseded**: GitHub returned incomplete label histories for 15% of its Issues, so ingest now fetches every label history twice. 24 tests pass (`uv run pytest`).
 >
 > ```bash
 > uv run python -m pointsman.pipeline.ingest            # add --limit N for a sample
@@ -148,7 +148,7 @@ pointsman/
 
 **Learn:** temporal leakage; label noise; class imbalance. Chip Huyen, *Designing Machine Learning Systems* (DMLS) ch. 3–4.
 
-**Checkpoint:** `uv run python -m pointsman.pipeline.split` passes `max(train.created_at) < min(val.created_at)` and `max(val.created_at) < min(test.created_at)`, and the manifest's row counts match DuckDB.
+**Checkpoint ✅ (2026-10-22, snapshot `2026-10-22-v2`):** `uv run python -m pointsman.pipeline.split` passes `max(train.created_at) < min(val.created_at)` and `max(val.created_at) < min(test.created_at)`, and the manifest's row counts match DuckDB.
 
 ---
 

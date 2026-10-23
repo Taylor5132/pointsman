@@ -156,6 +156,14 @@ pointsman/
 
 **Prerequisites:** M1.
 
+> **Status (2026-10-23): code done, collection running; scoring rule pending.** GitHub Actions polls every ~15 minutes and commits to the `live-data` branch (3 live Issues so far). The detector's alert path was tested end to end (test Issue #1). Still open: (1) confirm scheduled runs fire (only manual runs had appeared ~75 minutes after the first push); (2) after ~2 weeks of collection, measure weekly volume and write the live scoring rule. Milestone 3 can start meanwhile. 33 tests pass.
+>
+> ```bash
+> git -C data/live pull                                      # latest live data
+> gh run list --workflow collect.yml --limit 5               # recent runs (event "schedule" = automatic)
+> gh workflow run collect.yml -f test_alert=true             # check alerts still reach you
+> ```
+
 - [x] **`events/source.py`:** an **event source interface** (Issue opened, Team label created, Rulebook changed). Implemented as a poller that catches up from a saved bookmark after any downtime, and commits the bookmark only after events are handled (at-least-once delivery). Production would plug a GitHub webhook into the same interface.
 - [x] **`events/detector.py`:** on a new `team-*` label or a Triage Rulebook commit, record an alert and open an Issue in the Pointsman repo (one per event, even if delivered twice). The human regenerates the Team Change Log and commits the diff; that commit approves the new Taxonomy Version.
 - [x] **`live/collect.py`:** store new Issues that have no Team label, with their text frozen at collection time.

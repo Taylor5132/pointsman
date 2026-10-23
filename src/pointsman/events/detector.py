@@ -130,3 +130,24 @@ class GitHubIssueNotifier:
         body = alert.body + (f"\n\n@{self.mention}" if self.mention else "")
         created = self.client.query(CREATE_ISSUE, {"repo": repo["id"], "title": alert.title, "body": body})
         print(f"  ALERT: {alert.title} -> {created['createIssue']['issue']['url']}")
+
+
+def send_test_alert() -> None:
+    """Open one clearly marked test Issue, to check the real notification path works."""
+    import os
+
+    from pointsman.pipeline.github_client import get_token
+
+    now = datetime.now(timezone.utc)
+    alert = Alert(
+        key=f"test-{now:%Y%m%d%H%M%S}",
+        title=f"[test] Pointsman alert check (test-{now:%Y%m%d%H%M%S})",
+        body="A test of the Team Split detector's notifications. Nothing changed in Flutter. Close this Issue.",
+        record={},
+    )
+    GitHubIssueNotifier(GitHubClient(get_token()), os.environ["GITHUB_REPOSITORY"],
+                        os.environ.get("GITHUB_REPOSITORY_OWNER")).notify(alert)
+
+
+if __name__ == "__main__":
+    send_test_alert()

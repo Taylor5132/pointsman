@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 
 import pytest
 
+from pointsman.events.detector import PrintNotifier
 from pointsman.events.source import GitHubPoller, IssueOpened, TeamLabelCreated
 from pointsman.live.collect import run_once
 
@@ -43,28 +44,28 @@ def test_only_unrouted_human_issues_are_collected(tmp_path):
         opened(2, labels=["team-engine"]),  # already routed: too late to predict
         opened(3, author_type="Bot"),
         opened(4, labels=["P2"]),  # non-Team labels are fine
-    ]), tmp_path)
+    ]), PrintNotifier(), tmp_path)
     assert collected_numbers(tmp_path) == [1, 4]
     assert counts["skipped: already has a Team label"] == 1
     assert counts["skipped: bot author"] == 1
 
 
 def test_an_issue_is_stored_once_even_if_delivered_twice(tmp_path):
-    run_once(FakeSource([opened(1)]), tmp_path)
-    run_once(FakeSource([opened(1)]), tmp_path)
+    run_once(FakeSource([opened(1)]), PrintNotifier(), tmp_path)
+    run_once(FakeSource([opened(1)]), PrintNotifier(), tmp_path)
     assert collected_numbers(tmp_path) == [1]
 
 
 def test_progress_is_committed_only_after_events_are_handled(tmp_path):
     source = FakeSource([opened(1)])
-    run_once(source, tmp_path)
+    run_once(source, PrintNotifier(), tmp_path)
     assert source.committed
 
     malformed = opened(2)
     del malformed.issue["labels"]  # handling this Issue will crash
     crashing = FakeSource([malformed])
     with pytest.raises(KeyError):
-        run_once(crashing, tmp_path)
+        run_once(crashing, PrintNotifier(), tmp_path)
     assert not crashing.committed  # so the next poll delivers it again instead of losing it
 
 

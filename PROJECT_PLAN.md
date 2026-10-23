@@ -157,7 +157,7 @@ pointsman/
 **Prerequisites:** M1.
 
 - [x] **`events/source.py`:** an **event source interface** (Issue opened, Team label created, Rulebook changed). Implemented as a poller that catches up from a saved bookmark after any downtime, and commits the bookmark only after events are handled (at-least-once delivery). Production would plug a GitHub webhook into the same interface.
-- [ ] **`events/detector.py`:** raise an alert on a new `team-*` label or a Triage Rulebook commit, and append it to the Team Change Log. A human approves any new Taxonomy Version.
+- [x] **`events/detector.py`:** on a new `team-*` label or a Triage Rulebook commit, record an alert and open an Issue in the Pointsman repo (one per event, even if delivered twice). The human regenerates the Team Change Log and commits the diff; that commit approves the new Taxonomy Version.
 - [x] **`live/collect.py`:** store new Issues that have no Team label, with their text frozen at collection time.
 - [x] **Scheduled GitHub Actions workflow** (`.github/workflows/collect.yml`) polls every ~15 minutes and commits `data/live/` to the `live-data` branch. Chosen over a laptop schedule because 25% of Routed Issues get their Team label within 8 hours (measured on 4,694 Routed Issues since 2025), so overnight gaps would drop the fastest-triaged Issues. Prefect is postponed until its retries and dashboards are needed.
 - [ ] **Measure** real weekly volume and time until labeling, then **write the live scoring rule** into this plan before any predictions are scored.

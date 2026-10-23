@@ -13,6 +13,7 @@ on:
 
 permissions:
   contents: write  # to push to live-data
+  issues: write    # the Team Split detector opens an Issue per alert
 
 concurrency:
   group: collect  # never two runs at once: they would both push to live-data

@@ -107,7 +107,7 @@ pointsman/
 │   ├── resilience/              # weak_labels.py, backtest.py
 │   ├── evaluation/              # metrics.py, calibrate.py, cutoff.py, replay.py
 │   └── serving/                 # export_onnx.py, app.py
-├── flows/                       # Prefect flows (event polling, live collection)
+├── .github/workflows/           # collect.yml: live collection every ~15 minutes
 ├── tests/
 ├── Dockerfile
 └── pyproject.toml               # Managed with uv
@@ -156,10 +156,10 @@ pointsman/
 
 **Prerequisites:** M1.
 
-- [ ] **`events/source.py`:** a **Label Event source interface**. Implement a poller that queries every ~15 minutes and backfills by timestamp after any downtime. Document that production would plug a GitHub webhook (`label`, `issues.labeled`) into the same interface.
+- [x] **`events/source.py`:** an **event source interface** (Issue opened, Team label created, Rulebook changed). Implemented as a poller that catches up from a saved bookmark after any downtime, and commits the bookmark only after events are handled (at-least-once delivery). Production would plug a GitHub webhook into the same interface.
 - [ ] **`events/detector.py`:** raise an alert on a new `team-*` label or a Triage Rulebook commit, and append it to the Team Change Log. A human approves any new Taxonomy Version.
-- [ ] **`live/collect.py`:** store new Issues that have no Team label, with their text frozen at collection time.
-- [ ] **Prefect flow** wrapping the poller and collector (introduce Prefect once the plain scripts work).
+- [x] **`live/collect.py`:** store new Issues that have no Team label, with their text frozen at collection time.
+- [x] **Scheduled GitHub Actions workflow** (`.github/workflows/collect.yml`) polls every ~15 minutes and commits `data/live/` to the `live-data` branch. Chosen over a laptop schedule because 25% of Routed Issues get their Team label within 8 hours (measured on 4,694 Routed Issues since 2025), so overnight gaps would drop the fastest-triaged Issues. Prefect is postponed until its retries and dashboards are needed.
 - [ ] **Measure** real weekly volume and time until labeling, then **write the live scoring rule** into this plan before any predictions are scored.
 
 **Learn:** event-driven versus polling architectures; why prospective evaluation cannot leak.

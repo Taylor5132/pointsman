@@ -1,0 +1,51 @@
+# Live collection, run by GitHub so it keeps going while the owner's laptop is off.
+#
+# Each run: check out the code (main) and the collected data (the live-data branch),
+# poll GitHub once, then commit the new data back to live-data.
+# A late or skipped run is harmless: the poller's bookmark makes the next run catch up.
+
+name: Collect live Issues
+
+on:
+  schedule:
+    - cron: "7,22,37,52 * * * *"  # every 15 minutes, away from the busy top of the hour
+  workflow_dispatch:  # "Run workflow" button, for testing
+
+permissions:
+  contents: write  # to push to live-data
+
+concurrency:
+  group: collect  # never two runs at once: they would both push to live-data
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v7
+
+      - name: Check out the collected data
+        uses: actions/checkout@v7
+        with:
+          ref: live-data
+          path: data/live
+
+      - uses: astral-sh/setup-uv@v10.3.2
+        with:
+          enable-cache: true
+
+      - name: Poll once
+        run: uv run --no-dev python -m pointsman.live.collect
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Save to live-data
+        working-directory: data/live
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet || git commit -m "Poll $(date -u +%Y-%m-%dT%H:%MZ)"
+          git push

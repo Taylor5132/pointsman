@@ -1,7 +1,12 @@
 """Live collection: save new Issues that no one has routed yet, frozen as first seen.
 
-Usage (one poll; Prefect will run it every ~15 minutes):
+Usage (one poll):
     uv run python -m pointsman.live.collect
+
+GitHub Actions runs this every ~15 minutes (.github/workflows/collect.yml) and commits
+data/live/ to the live-data branch. Locally, data/live/ is a git worktree of that
+branch: `git -C data/live pull` shows the latest. Do not poll locally as well, or the
+two copies of the bookmark will drift apart.
 
 Writes (all under data/live/):
     issues.jsonl       one line per collected Issue, text frozen at collection time

@@ -32,6 +32,37 @@ def test_split_code_separates_fenced_blocks_from_prose():
     assert "Steps:" in prose and "Then it crashes." in prose
 
 
+def test_strip_markup_removes_the_bug_form_checklist():
+    body = (
+        "### Is there an existing issue for this?\n\n"
+        "- [X] I have searched the [existing issues](https://github.com/flutter/flutter/issues)\n"
+        "- [x] I have read the [guide to filing a bug](https://flutter.dev/docs/resources/bug-reports)\n\n"
+        "### Steps to reproduce\n\n"
+        "- [x] The issue still persists on the master channel"
+    )
+    text = strip_markup(body)
+    assert "existing issue" not in text and "I have" not in text
+    assert "### Steps to reproduce" in text
+    assert "still persists on the master channel" in text  # other checkboxes are real information
+
+
+def test_split_code_finds_fences_indented_in_a_list():
+    prose, blocks = split_code("1. Run:\n   ```sh\n   flutter run\n   ```\n2. Tap the button.")
+    assert len(blocks) == 1 and "flutter run" in blocks[0]
+    assert "flutter run" not in prose
+    assert "Tap the button." in prose
+
+
+def test_windows_line_endings_are_handled(make_issue):
+    # GitHub's web form ends lines with \r\n. The code block must still be found.
+    body = "Steps:\r\n```\r\nvoid main() {}\r\n```\r\nThen it crashes:\r\n    at com.example.Main.run(Main.java:10)\r\n"
+    row, _ = clean_issue(raw(make_issue, body=body))
+    assert row.num_code_blocks == 1
+    assert "void main" in row.code and "void main" not in row.prose
+    assert "\r" not in row.prose
+    assert row.has_stack_trace
+
+
 def test_has_stack_trace_spots_dart_frames():
     trace = "#0      State.setState (package:flutter/src/widgets/framework.dart:1219:9)"
     assert has_stack_trace(trace)

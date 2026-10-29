@@ -24,7 +24,13 @@ HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 DETAILS_TAGS = re.compile(r"</?(details|summary)[^>]*>", re.IGNORECASE)
 IMAGE = re.compile(r"!\[[^\]]*\]\([^)]*\)|<img[^>]*>", re.IGNORECASE)
 NO_RESPONSE = re.compile(r"^_No response_\s*$", re.MULTILINE)  # GitHub's filler for empty form fields
-CODE_FENCE = re.compile(r"^(```|~~~).*?^\1[ \t]*$", re.DOTALL | re.MULTILINE)
+# The bug form's opening checklist, ticked the same way on nearly every bug report.
+FORM_CHECKLIST = re.compile(
+    r"^### Is there an existing issue for this\?[ \t]*$|^- \[x\] I have (searched|read) the \[.*$",
+    re.MULTILINE | re.IGNORECASE,
+)
+# A fence may be indented, e.g. inside a numbered list of steps.
+CODE_FENCE = re.compile(r"^[ \t]*(```|~~~).*?^[ \t]*\1[ \t]*$", re.DOTALL | re.MULTILINE)
 BLANK_LINES = re.compile(r"\n{3,}")
 
 # A line of a Dart stack trace looks like:
@@ -46,6 +52,7 @@ def strip_markup(body: str) -> str:
     text = DETAILS_TAGS.sub("", text)
     text = IMAGE.sub("[image]", text)
     text = NO_RESPONSE.sub("", text)
+    text = FORM_CHECKLIST.sub("", text)
     return text
 
 
@@ -103,7 +110,10 @@ def clean_issue(issue: RawIssue) -> tuple[CleanIssue | None, str | None]:
         return None, "more than one Team label"
     team = team_labels[0]
 
-    prose, blocks = split_code(strip_markup(issue.body))
+    # GitHub's web form ends lines with \r\n, but a regex's $ only stops before \n,
+    # so a closing ``` followed by \r would never be found. Use plain \n everywhere.
+    body = issue.body.replace("\r\n", "\n")
+    prose, blocks = split_code(strip_markup(body))
     code = "\n\n".join(blocks)
     label_names = {l.name for l in issue.labels}
 
@@ -113,7 +123,7 @@ def clean_issue(issue: RawIssue) -> tuple[CleanIssue | None, str | None]:
         prose=prose,
         code=code,
         num_code_blocks=len(blocks),
-        has_stack_trace=has_stack_trace(issue.body),
+        has_stack_trace=has_stack_trace(body),
         created_at=issue.created_at,
         closed_at=issue.closed_at,
         state=issue.state,

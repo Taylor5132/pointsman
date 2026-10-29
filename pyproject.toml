@@ -1,7 +1,7 @@
 [project]
 name = "pointsman"
 version = "0.1.0"
-description = "Add your description here"
+description = "Routes flutter/flutter GitHub issues to the Flutter team that should own them"
 readme = "README.md"
 authors = [
     { name = "michael_y8n", email = "121900408+Taylor5132@users.noreply.github.com" }
@@ -18,6 +18,7 @@ dependencies = [
     "pydantic>=2.14.1",
     "pytz>=2026.5",
     "scikit-learn>=1.9.1",
+    "tokenizers>=0.23.3",
 ]
 
 [project.scripts]

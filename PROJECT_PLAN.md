@@ -129,7 +129,7 @@ pointsman/
 
 **Prerequisites:** M0.
 
-> **Status (2026-10-22): ✅ done.** Use snapshot **`2026-10-22-v2`** (frozen; 14,660 Issues: train 10,261 / val 2,199 / test 2,200; Routed known for all but 24). Snapshot `2026-10-22` is **superseded**: GitHub returned incomplete label histories for 15% of its Issues, so ingest now fetches every label history twice. 24 tests pass (`uv run pytest`).
+> **Status (2026-10-28): ✅ done.** Use snapshot **`2026-10-22-v3`** (frozen; 14,660 Issues: train 10,261 / val 2,199 / test 2,200; Routed known for all but 24). It re-cleans `v2`'s raw download with fixed code splitting: `\r\n` line endings and indented fences had left code inside the prose for 34.9% of train + val Issues (found in Milestone 3). Same Issues and split boundaries as `v2`; only `prose`, `code`, `num_code_blocks` and `has_stack_trace` differ. Fences still left in prose: 1.6% of Issues, mostly never closed by their author. **Superseded:** `2026-10-22-v2` (that cleaning bug) and `2026-10-22` (GitHub returned incomplete label histories for 15% of its Issues, so ingest now fetches every label history twice). 36 tests pass (`uv run pytest`).
 >
 > ```bash
 > uv run python -m pointsman.pipeline.ingest            # add --limit N for a sample
@@ -148,7 +148,7 @@ pointsman/
 
 **Learn:** temporal leakage; label noise; class imbalance. Chip Huyen, *Designing Machine Learning Systems* (DMLS) ch. 3–4.
 
-**Checkpoint ✅ (2026-10-22, snapshot `2026-10-22-v2`):** `uv run python -m pointsman.pipeline.split` passes `max(train.created_at) < min(val.created_at)` and `max(val.created_at) < min(test.created_at)`, and the manifest's row counts match DuckDB.
+**Checkpoint ✅ (2026-10-22, snapshot `2026-10-22-v2`; `v3` has identical splits):** `uv run python -m pointsman.pipeline.split` passes `max(train.created_at) < min(val.created_at)` and `max(val.created_at) < min(test.created_at)`, and the manifest's row counts match DuckDB.
 
 ---
 
@@ -156,7 +156,9 @@ pointsman/
 
 **Prerequisites:** M1.
 
-> **Status (2026-10-23): code done, collection running; scoring rule pending.** GitHub Actions polls every ~15 minutes and commits to the `live-data` branch (3 live Issues so far). The detector's alert path was tested end to end (test Issue #1). Still open: (1) confirm scheduled runs fire (only manual runs had appeared ~75 minutes after the first push); (2) after ~2 weeks of collection, measure weekly volume and write the live scoring rule. Milestone 3 can start meanwhile. 33 tests pass.
+> **Status (2026-10-23): code done, collection running; scoring rule pending.** GitHub Actions polls every ~15 minutes and commits to the `live-data` branch (3 live Issues so far). The detector's alert path was tested end to end (test Issue #1). Still open: after ~2 weeks of collection (from ~2026-11-05), measure weekly volume and write the live scoring rule. Milestone 3 can start meanwhile. 33 tests pass.
+>
+> **Check (2026-10-28):** scheduled runs fire, but GitHub delays them: 36 runs in 6 days, 2–7 hours apart instead of 15 minutes. No Issue was missed: polls saw 151, and GitHub search counts 151 for the same window. Collected 92; skipped 2 bot Issues and 57 that already had a Team label. Of those 57: 32 labeled by their own author (skipped by design), 9 routed by someone else before our poll (8–290 minutes after opening), 16 unknown (GitHub returned no label history yet). So the slow schedule costs 9–25 of 149 human Issues (6–17%).
 >
 > ```bash
 > git -C data/live pull                                      # latest live data
@@ -180,7 +182,9 @@ pointsman/
 
 **Prerequisites:** M1.
 
-- [ ] **`01_eda.ipynb`:** Team distribution; Routed versus Self-labeled share per Team; open/closed mix across splits; how often Team labels change (bounces between Teams); monthly Team volume with Team Split dates overlaid; Issue length distribution in tokens.
+> **Status (2026-10-28): ✅ done.** `notebooks/01_eda.ipynb` on snapshot `2026-10-22-v3`, train + val only (test stays locked). Its last cell lists the 5 findings.
+
+- [x] **`01_eda.ipynb`:** Team distribution; Routed versus Self-labeled share per Team; open/closed mix across splits; how often Team labels change (bounces between Teams); monthly Team volume with Team Split dates overlaid; Issue length distribution in tokens.
 
 **Checkpoint:** a written list of the 5 findings that most affect modeling choices.
 

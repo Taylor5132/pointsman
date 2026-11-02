@@ -56,3 +56,4 @@
 {"polled_at": "2026-11-01T23:51:07.557467+00:00", "seen": 2, "collected": 2}
 {"polled_at": "2026-11-02T02:48:51.130308+00:00", "seen": 1, "collected": 1}
 {"polled_at": "2026-11-02T10:04:38.345282+00:00", "seen": 7, "skipped: bot author": 3, "collected": 4}
+{"polled_at": "2026-11-02T20:16:54.093969+00:00", "seen": 16, "skipped: already has a Team label": 6, "collected": 10}

@@ -97,3 +97,4 @@
 {"polled_at": "2026-11-12T22:18:03.853869+00:00", "seen": 3, "collected": 3}
 {"polled_at": "2026-11-13T02:40:35.798224+00:00", "seen": 4, "collected": 3, "skipped: already has a Team label": 1}
 {"polled_at": "2026-11-13T10:04:13.329962+00:00", "seen": 5, "collected": 4, "skipped: already has a Team label": 1}
+{"polled_at": "2026-11-13T17:39:20.261777+00:00", "seen": 10, "collected": 4, "skipped: already has a Team label": 6}

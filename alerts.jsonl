@@ -1,0 +1,1 @@
+{"seen_at": "2026-11-20T02:25:39.337845+00:00", "kind": "rulebook_changed", "commit": "dc630b4fd893c2fd09564fea6101c2cd1cb17e95", "committed_at": "2026-11-19T23:39:13+00:00", "summary": "Include assigned issues in Android incoming triage link (#197008)"}

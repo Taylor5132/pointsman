@@ -133,3 +133,4 @@
 {"polled_at": "2026-11-22T21:52:38.155723+00:00", "seen": 3, "collected": 3}
 {"polled_at": "2026-11-23T02:29:03.135137+00:00"}
 {"polled_at": "2026-11-23T11:08:17.546191+00:00", "seen": 8, "collected": 6, "skipped: already has a Team label": 2}
+{"polled_at": "2026-11-23T22:42:39.302056+00:00", "seen": 11, "collected": 5, "skipped: already has a Team label": 6}
